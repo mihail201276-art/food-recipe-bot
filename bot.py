@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import os
 import re
 from html import escape
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
@@ -396,11 +398,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await search_recipes(update, context)
 
 
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *a, **kw):
+        pass
+
+
+def run_health_server():
+    port = int(os.getenv("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    logger.info("Health server on port %d", port)
+    server.serve_forever()
+
+
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
         logger.error("BOT_TOKEN environment variable not set!")
         return
+
+    import threading
+    t = threading.Thread(target=run_health_server, daemon=True)
+    t.start()
 
     init_db()
     logger.info("Starting bot...")
