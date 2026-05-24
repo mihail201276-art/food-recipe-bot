@@ -379,13 +379,6 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def catch_all_callbacks(update: Update, _context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    logger.warning("Unhandled callback: %s", query.data)
-    await query.answer()
-    await query.edit_message_text("Что-то пошло не так. Начни заново: /start")
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -432,14 +425,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(show_recipe, pattern=r"^recipe_\d+$"))
-    app.add_handler(CallbackQueryHandler(add_favorite_handler, pattern=r"^fav_add_\d+$"))
-    app.add_handler(CallbackQueryHandler(remove_favorite_handler, pattern=r"^fav_del_\d+$"))
-    app.add_handler(CallbackQueryHandler(view_favorite, pattern=r"^fav_view_\d+$"))
-    app.add_handler(CallbackQueryHandler(rate_recipe, pattern=r"^rate_\d+_\d$"))
-    app.add_handler(CallbackQueryHandler(back_to_search, pattern=r"^back_search$"))
-    app.add_handler(CallbackQueryHandler(back_to_favorites, pattern=r"^back_fav$"))
-    app.add_handler(CallbackQueryHandler(catch_all_callbacks))
+    app.add_handler(CallbackQueryHandler(callback_router))
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
