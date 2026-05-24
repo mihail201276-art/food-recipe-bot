@@ -432,7 +432,7 @@ def main():
     render_url = os.getenv("RENDER_EXTERNAL_URL", f"https://food-recipe-bot.onrender.com")
     webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
     webhook_url = f"{render_url}{webhook_path}"
-    secret = os.getenv("WEBHOOK_SECRET", token[:16])
+    secret = os.getenv("WEBHOOK_SECRET", token.split(":")[1][:16])
 
     logger.info("Starting webhook on port %d at %s", port, webhook_url)
     app.run_webhook(
