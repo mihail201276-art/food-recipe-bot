@@ -1,3 +1,7 @@
+import sys
+sys.stdout.write("=== BOT STARTING ===\n")
+sys.stdout.flush()
+
 import logging
 import os
 import re
@@ -13,8 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("bot.log", encoding="utf-8"),
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -414,6 +417,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    sys.stdout.write("=== MAIN() STARTED ===\n")
+    sys.stdout.flush()
     token = os.getenv("BOT_TOKEN")
     if not token:
         logger.error("BOT_TOKEN environment variable not set!")
