@@ -1,9 +1,7 @@
-import asyncio
 import logging
 import os
 import re
 from html import escape
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
@@ -391,32 +389,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await search_recipes(update, context)
 
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ok")
-
-    def log_message(self, *a, **kw):
-        pass
-
-
-def run_health_server():
-    port = int(os.getenv("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    logger.info("Health server on port %d", port)
-    server.serve_forever()
-
-
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
         logger.error("BOT_TOKEN environment variable not set!")
         return
-
-    import threading
-    t = threading.Thread(target=run_health_server, daemon=True)
-    t.start()
 
     init_db()
     logger.info("Starting bot...")
@@ -427,8 +404,21 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(callback_router))
 
-    logger.info("Bot is running. Press Ctrl+C to stop.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    port = int(os.getenv("PORT", "10000"))
+    render_url = os.getenv("RENDER_EXTERNAL_URL", f"https://food-recipe-bot.onrender.com")
+    webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
+    webhook_url = f"{render_url}{webhook_path}"
+    secret = os.getenv("WEBHOOK_SECRET", token[:16])
+
+    logger.info("Starting webhook on port %d at %s", port, webhook_url)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=webhook_path,
+        webhook_url=webhook_url,
+        secret_token=secret,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
