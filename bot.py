@@ -1,5 +1,4 @@
 import sys
-import hashlib
 import logging
 import os
 import re
@@ -433,18 +432,17 @@ def main():
     render_url = os.getenv("RENDER_EXTERNAL_URL", f"https://food-recipe-bot.onrender.com")
     webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
     webhook_url = f"{render_url}{webhook_path}"
-    import hashlib
-    secret = os.getenv("WEBHOOK_SECRET", hashlib.sha256(token.encode()).hexdigest()[:32])
-
     logger.info("Starting webhook on port %d at %s", port, webhook_url)
-    app.run_webhook(
+    kwargs = dict(
         listen="0.0.0.0",
         port=port,
         url_path=webhook_path,
         webhook_url=webhook_url,
-        secret_token=secret,
         allowed_updates=Update.ALL_TYPES,
     )
+    if secret := os.getenv("WEBHOOK_SECRET"):
+        kwargs["secret_token"] = secret
+    app.run_webhook(**kwargs)
 
 
 if __name__ == "__main__":
