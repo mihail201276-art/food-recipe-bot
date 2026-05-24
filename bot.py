@@ -104,74 +104,67 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     meal = meals[0]
-    name = meal.get("strMeal", "Unknown")
-    category = meal.get("strCategory", "")
-    area = meal.get("strArea", "")
-    instructions = meal.get("strInstructions", "")
-    image = meal.get("strMealThumb", "")
-    youtube = meal.get("strYoutube", "")
+    name = meal.get("strMeal") or "Unknown"
+    category = meal.get("strCategory") or ""
+    area = meal.get("strArea") or ""
+    instructions = meal.get("strInstructions") or ""
+    image = meal.get("strMealThumb") or ""
+    youtube = meal.get("strYoutube") or ""
 
-    ingredients = []
+    parts = [f"<b>{escape(name)}</b>"]
+    if category:
+        parts.append(f"🏷 Категория: {escape(category)}")
+    if area:
+        parts.append(f"🌍 Кухня: {escape(area)}")
+
+    ings = []
     for i in range(1, 21):
         ing = meal.get(f"strIngredient{i}")
         meas = meal.get(f"strMeasure{i}")
         if ing and ing.strip():
-            ingredients.append(f"• {ing.strip()} — {meas.strip()}" if meas else f"• {ing.strip()}")
+            ings.append(f"• {escape(ing.strip())}" + (f" — {escape(meas.strip())}" if meas else ""))
+    if ings:
+        parts.append("<b>Ингредиенты:</b>\n" + "\n".join(ings))
 
-    text = f"<b>{escape(name)}</b>\n"
-    if category:
-        text += f"🏷 Категория: {escape(category)}\n"
-    if area:
-        text += f"🌍 Кухня: {escape(area)}\n"
-    text += f"\n<b>Ингредиенты:</b>\n" + "\n".join(ingredients)
+    instr_text = escape(instructions[:500]) if instructions else ""
+    if instructions and len(instructions) > 500:
+        instr_text += "..."
+    if instr_text.strip():
+        parts.append(f"<b>Приготовление:</b>\n{instr_text}")
 
-    has_image = bool(image)
-    limit = 950 if has_image else 3900
-    if len(text) > limit:
-        text = text[:limit] + "..."
-
-    instr = f"\n\n<b>Приготовление:</b>\n{escape(instructions[:600])}"
-    if len(instructions) > 600:
-        instr += "..."
     if youtube:
-        instr += f"\n\n▶ <a href='{escape(youtube)}'>Смотреть видео</a>"
-
-    free = limit - len(text)
-    if free > 60:
-        text += instr[:free]
+        parts.append(f"▶ <a href='{escape(youtube)}'>Смотреть видео</a>")
 
     fav = is_favorite(user_id, recipe_id)
-    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search")]]
-
     if fav:
         rating = get_rating(user_id, recipe_id)
-        stars = "⭐" * rating + "☆" * (5 - rating) if rating else "—"
-        text += f"\n\n⭐ Ваша оценка: {stars}"
-        rate_row = [
-            InlineKeyboardButton(
-                "⭐" * s + "☆" * (5 - s),
-                callback_data=f"rate_{recipe_id}_{s}",
-            ) for s in range(1, 6)
-        ]
+        parts.append(f"⭐ Ваша оценка: {'⭐' * rating}{'☆' * (5 - rating)}" if rating else "⭐ Ваша оценка: —")
+
+    text = "\n\n".join(parts)
+    if len(text) > 950 and image:
+        text = text[:950] + "..."
+
+    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search")]]
+    if fav:
+        rate_row = [InlineKeyboardButton("⭐" * s + "☆" * (5 - s), callback_data=f"rate_{recipe_id}_{s}") for s in range(1, 6)]
         keyboard.insert(0, rate_row)
         keyboard.insert(1, [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")])
     else:
         keyboard.insert(0, [InlineKeyboardButton("❤️ Добавить в избранное", callback_data=f"fav_add_{recipe_id}")])
 
     try:
-        if has_image:
-            await query.message.reply_photo(
-                photo=image, caption=text, parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
+        if image:
+            msg = await query.message.reply_photo(photo=image, caption=text[:1024], parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            logger.info("Recipe %s photo sent, msg_id=%s", recipe_id, msg.message_id)
             await query.message.delete()
         else:
-            await query.edit_message_text(
-                text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await query.edit_message_text(text[:4000], parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
-        logger.error("Failed to show recipe %s: %s", recipe_id, e)
-        await query.edit_message_text("Ошибка при загрузке рецепта.")
+        logger.error("Failed to show recipe: %s", e)
+        try:
+            await query.edit_message_text("Не удалось показать рецепт.")
+        except Exception:
+            pass
 
 
 async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -384,6 +377,13 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def catch_all_callbacks(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    logger.warning("Unhandled callback: %s", query.data)
+    await query.answer()
+    await query.edit_message_text("Что-то пошло не так. Начни заново: /start")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -416,6 +416,7 @@ def main():
     app.add_handler(CallbackQueryHandler(rate_recipe, pattern=r"^rate_\d+_\d$"))
     app.add_handler(CallbackQueryHandler(back_to_search, pattern=r"^back_search$"))
     app.add_handler(CallbackQueryHandler(back_to_favorites, pattern=r"^back_fav$"))
+    app.add_handler(CallbackQueryHandler(catch_all_callbacks))
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
