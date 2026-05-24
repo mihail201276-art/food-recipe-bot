@@ -85,7 +85,7 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     recipe_id = query.data.replace("recipe_", "")
-    user_id = query.effective_user.id
+    user_id = query.from_user.id
     logger.info("User %s viewing recipe %s", user_id, recipe_id)
 
     try:
@@ -171,7 +171,7 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     recipe_id = query.data.replace("fav_add_", "")
-    user_id = query.effective_user.id
+    user_id = query.from_user.id
     logger.info("User %s adding favorite recipe %s", user_id, recipe_id)
 
     try:
@@ -213,7 +213,7 @@ async def remove_favorite_handler(update: Update, _context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
     recipe_id = query.data.replace("fav_del_", "")
-    user_id = query.effective_user.id
+    user_id = query.from_user.id
     logger.info("User %s removing favorite recipe %s", user_id, recipe_id)
 
     ok = remove_favorite(user_id, recipe_id)
@@ -237,7 +237,7 @@ async def rate_recipe(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split("_")
     recipe_id = parts[1]
     rating = int(parts[2])
-    user_id = query.effective_user.id
+    user_id = query.from_user.id
     logger.info("User %s rated recipe %s: %d stars", user_id, recipe_id, rating)
 
     update_rating(user_id, recipe_id, rating)
@@ -283,7 +283,7 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     recipe_id = query.data.replace("fav_view_", "")
-    user_id = query.effective_user.id
+    user_id = query.from_user.id
 
     favorites = get_favorites(user_id)
     meal = next((f for f in favorites if f["recipe_id"] == recipe_id), None)
@@ -358,7 +358,7 @@ async def back_to_search(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = query.effective_user.id
+    user_id = query.from_user.id
 
     favorites = get_favorites(user_id)
     if not favorites:
