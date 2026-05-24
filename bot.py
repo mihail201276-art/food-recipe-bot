@@ -1,12 +1,13 @@
 import logging
 import os
+import re
 from html import escape
 
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite
+from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,20 +134,29 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(instructions) > 600:
         instr += "..."
     if youtube:
-        instr += f"\n\n▶ <a href='{escape(youtube)}'>YouTube</a>"
+        instr += f"\n\n▶ <a href='{escape(youtube)}'>Смотреть видео</a>"
 
     free = limit - len(text)
     if free > 60:
         text += instr[:free]
 
     fav = is_favorite(user_id, recipe_id)
-    fav_text = "❌ Удалить из избранного" if fav else "❤️ Добавить в избранное"
-    fav_cb = f"fav_del_{recipe_id}" if fav else f"fav_add_{recipe_id}"
+    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search")]]
 
-    keyboard = [
-        [InlineKeyboardButton(fav_text, callback_data=fav_cb)],
-        [InlineKeyboardButton("← Назад к поиску", callback_data="back_search")],
-    ]
+    if fav:
+        rating = get_rating(user_id, recipe_id)
+        stars = "⭐" * rating + "☆" * (5 - rating) if rating else "—"
+        text += f"\n\n⭐ Ваша оценка: {stars}"
+        rate_row = [
+            InlineKeyboardButton(
+                "⭐" * s + "☆" * (5 - s),
+                callback_data=f"rate_{recipe_id}_{s}",
+            ) for s in range(1, 6)
+        ]
+        keyboard.insert(0, rate_row)
+        keyboard.insert(1, [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")])
+    else:
+        keyboard.insert(0, [InlineKeyboardButton("❤️ Добавить в избранное", callback_data=f"fav_add_{recipe_id}")])
 
     try:
         if has_image:
@@ -191,10 +201,16 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         await query.answer("Уже в избранном.", show_alert=True)
 
-    fav_btn = InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")
+    rate_row = [
+        InlineKeyboardButton(
+            "⭐" * s + "☆" * (5 - s),
+            callback_data=f"rate_{recipe_id}_{s}",
+        ) for s in range(1, 6)
+    ]
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup([
-            [fav_btn],
+            rate_row,
+            [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")],
             [InlineKeyboardButton("← Назад к поиску", callback_data="back_search")],
         ])
     )
@@ -222,6 +238,33 @@ async def remove_favorite_handler(update: Update, _context: ContextTypes.DEFAULT
     )
 
 
+async def rate_recipe(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    recipe_id = parts[1]
+    rating = int(parts[2])
+    user_id = query.effective_user.id
+    logger.info("User %s rated recipe %s: %d stars", user_id, recipe_id, rating)
+
+    update_rating(user_id, recipe_id, rating)
+    await query.answer(f"⭐ Оценка: {rating}/5")
+
+    stars_str = "⭐" * rating + "☆" * (5 - rating)
+    new_text = query.message.caption or query.message.text
+    new_text = re.sub(r"⭐ Ваша оценка:.*", f"⭐ Ваша оценка: {stars_str}", new_text)
+    if "⭐ Ваша оценка:" not in new_text:
+        new_text += f"\n⭐ Ваша оценка: {stars_str}"
+
+    try:
+        if query.message.photo:
+            await query.edit_message_caption(caption=new_text, parse_mode="HTML")
+        else:
+            await query.edit_message_text(new_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error("Failed to update rating: %s", e)
+
+
 async def my_favorites(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info("User %s viewing favorites", user_id)
@@ -233,7 +276,9 @@ async def my_favorites(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     for fav in favorites:
-        keyboard.append([InlineKeyboardButton(fav["recipe_name"], callback_data=f"fav_view_{fav['recipe_id']}")])
+        r = int(fav.get("rating", 0) or 0)
+        stars = " " + "⭐" * r if r else ""
+        keyboard.append([InlineKeyboardButton(f"{fav['recipe_name']}{stars}", callback_data=f"fav_view_{fav['recipe_id']}")])
 
     await update.message.reply_text(
         f"📚 Твои избранные рецепты ({len(favorites)}):",
@@ -265,15 +310,30 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     if len(text) > limit:
         text = text[:limit] + "..."
 
-    instr = f"\n\n<b>Приготовление:</b>\n{escape(meal['instructions'][:600])}"
-    if len(meal["instructions"]) > 600:
+    rating = get_rating(user_id, recipe_id)
+    stars_str = "⭐" * rating + "☆" * (5 - rating) if rating else "—"
+    text += f"\n\n⭐ Ваша оценка: {stars_str}"
+
+    instr = f"\n\n<b>Приготовление:</b>\n{escape(meal['instructions'][:500])}"
+    if len(meal["instructions"]) > 500:
         instr += "..."
+
+    youtube = meal.get("youtube_url", "")
+    if youtube:
+        instr += f"\n\n▶ <a href='{escape(youtube)}'>Смотреть видео</a>"
 
     free = limit - len(text)
     if free > 60:
         text += instr[:free]
 
+    rate_row = [
+        InlineKeyboardButton(
+            "⭐" * s + "☆" * (5 - s),
+            callback_data=f"rate_{recipe_id}_{s}",
+        ) for s in range(1, 6)
+    ]
     keyboard = [
+        rate_row,
         [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")],
         [InlineKeyboardButton("← Назад к избранному", callback_data="back_fav")],
     ]
@@ -314,7 +374,9 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     for fav in favorites:
-        keyboard.append([InlineKeyboardButton(fav["recipe_name"], callback_data=f"fav_view_{fav['recipe_id']}")])
+        r = int(fav.get("rating", 0) or 0)
+        stars = " " + "⭐" * r if r else ""
+        keyboard.append([InlineKeyboardButton(f"{fav['recipe_name']}{stars}", callback_data=f"fav_view_{fav['recipe_id']}")])
 
     await query.edit_message_text(
         f"📚 Твои избранные рецепты ({len(favorites)}):",
@@ -351,6 +413,7 @@ def main():
     app.add_handler(CallbackQueryHandler(add_favorite_handler, pattern=r"^fav_add_\d+$"))
     app.add_handler(CallbackQueryHandler(remove_favorite_handler, pattern=r"^fav_del_\d+$"))
     app.add_handler(CallbackQueryHandler(view_favorite, pattern=r"^fav_view_\d+$"))
+    app.add_handler(CallbackQueryHandler(rate_recipe, pattern=r"^rate_\d+_\d$"))
     app.add_handler(CallbackQueryHandler(back_to_search, pattern=r"^back_search$"))
     app.add_handler(CallbackQueryHandler(back_to_favorites, pattern=r"^back_fav$"))
 
