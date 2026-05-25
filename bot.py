@@ -347,11 +347,13 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Ошибка при загрузке рецепта.")
 
 
-async def back_to_search(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+async def back_to_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
-        "Напиши название блюда для поиска (на английском):"
+    await query.message.delete()
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Напиши название блюда для поиска (на английском):",
     )
 
 
@@ -362,7 +364,11 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     favorites = get_favorites(user_id)
     if not favorites:
-        await query.edit_message_text("У тебя пока нет избранных рецептов.")
+        await query.message.delete()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="У тебя пока нет избранных рецептов.",
+        )
         return
 
     keyboard = []
@@ -371,8 +377,10 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stars = " " + "⭐" * r if r else ""
         keyboard.append([InlineKeyboardButton(f"{fav['recipe_name']}{stars}", callback_data=f"fav_view_{fav['recipe_id']}")])
 
-    await query.edit_message_text(
-        f"📚 Твои избранные рецепты ({len(favorites)}):",
+    await query.message.delete()
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=f"📚 Твои избранные рецепты ({len(favorites)}):",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
