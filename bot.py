@@ -132,13 +132,13 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if instr_text.strip():
         parts.append(f"<b>Приготовление:</b>\n{instr_text}")
 
-    if youtube:
-        parts.append(f"▶ <a href='{escape(youtube)}'>Смотреть видео</a>")
-
     fav = is_favorite(user_id, recipe_id)
     if fav:
         rating = get_rating(user_id, recipe_id)
         parts.append(f"⭐ Ваша оценка: {'⭐' * rating}{'☆' * (5 - rating)}" if rating else "⭐ Ваша оценка: —")
+
+    if youtube:
+        parts.append(f"▶ <a href='{escape(youtube)}'>Смотреть видео</a>")
 
     text = "\n\n".join(parts)
     if len(text) > 950 and image:
@@ -169,7 +169,6 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     recipe_id = query.data.replace("fav_add_", "")
     user_id = query.from_user.id
     logger.info("User %s adding favorite recipe %s", user_id, recipe_id)
@@ -233,7 +232,6 @@ async def remove_favorite_handler(update: Update, _context: ContextTypes.DEFAULT
 
 async def rate_recipe(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     parts = query.data.split("_")
     recipe_id = parts[1]
     rating = int(parts[2])
