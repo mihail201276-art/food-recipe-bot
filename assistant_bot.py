@@ -13,23 +13,60 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = "Ты вежливый и профессиональный личный помощник, работающий в Telegram."
 
 
-def get_llm_response(user_message: str) -> str:
-    client = OpenAI(
-        api_key=os.getenv("PROXYAPI_KEY"),
-        base_url="https://api.proxyapi.ru/openai/v1",
-    )
+def _call_proxyapi(message: str) -> str | None:
+    key = os.getenv("PROXYAPI_KEY")
+    if not key:
+        return None
     try:
-        response = client.chat.completions.create(
+        client = OpenAI(api_key=key, base_url="https://api.proxyapi.ru/openai/v1", timeout=15)
+        resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
+                {"role": "user", "content": message},
             ],
         )
-        return response.choices[0].message.content
+        return resp.choices[0].message.content
     except Exception as e:
-        logger.error("LLM request failed: %s", e)
-        return "Извини, произошла ошибка при обработке запроса. Попробуй позже."
+        logger.warning("ProxyAPI failed: %s", e)
+        return None
+
+
+def _call_apifreellm(message: str) -> str | None:
+    key = os.getenv("APIFREEL_KEY")
+    if not key:
+        return None
+    try:
+        with httpx.Client(timeout=35) as client:
+            resp = client.post(
+                "https://apifreellm.com/api/v1/chat",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {key}",
+                },
+                json={"message": message},
+            )
+            data = resp.json()
+            if data.get("success"):
+                return data["response"]
+            logger.warning("ApiFreeLLM not ok: %s", data)
+            return None
+    except Exception as e:
+        logger.warning("ApiFreeLLM failed: %s", e)
+        return None
+
+
+def get_llm_response(user_message: str) -> str:
+    reply = _call_proxyapi(user_message)
+    if reply:
+        return reply
+
+    logger.info("Falling back to ApiFreeLLM...")
+    reply = _call_apifreellm(user_message)
+    if reply:
+        return reply
+
+    return "Извини, все провайдеры недоступны. Попробуй позже."
 
 
 def _api_call(token: str, method: str, json_data: dict):
@@ -104,7 +141,7 @@ if __name__ == "__main__":
     import sys
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s): %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     run_assistant_bot()
