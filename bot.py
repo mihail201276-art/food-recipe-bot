@@ -1,21 +1,26 @@
 import sys
-import logging
 import os
 import re
+import threading
 from html import escape
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating
+from assistant_bot import run_assistant_bot
+
+import logging
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
@@ -426,7 +431,10 @@ def main():
         return
 
     init_db()
-    logger.info("Starting bot...")
+    logger.info("Starting bots...")
+
+    t = threading.Thread(target=run_assistant_bot, daemon=True)
+    t.start()
 
     app = Application.builder().token(token).build()
 

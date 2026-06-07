@@ -7,3 +7,5 @@ debug_*.py
 find_proxy.py
 check_*.py
 proxy.txt
+.env
+
