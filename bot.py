@@ -82,8 +82,8 @@ async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_chat_action("typing")
 
-    # если запрос не на латинице — переводим через LLM
-    if not re.match(r'^[a-zA-Z0-9\s\-]+$', query):
+    # если есть кириллица — переводим через LLM
+    if re.search(r'[а-яА-ЯёЁ]', query):
         logger.info("Non-Latin query detected, translating: %s", query)
         system = "Переведи название блюда на английский. Ответь только одним-двумя словами, без пояснений."
         translated = await asyncio.to_thread(llm.get_llm_response, query, system)
@@ -868,7 +868,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("User %s sent photo", user_id)
 
     file = await update.message.photo[-1].get_file()
-    file_url = file.file_path
+    token = context.bot.token
+    file_url = f"https://api.telegram.org/file/bot{token}/{file.file_path}"
 
     await update.message.reply_chat_action("typing")
     prompt = "Посмотри на фото продуктов. Предложи 3-5 блюд, которые можно из них приготовить. Напиши на русском, кратко."
