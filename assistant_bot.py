@@ -10,7 +10,10 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = "Ты вежливый и профессиональный личный помощник, работающий в Telegram."
+SYSTEM_PROMPT = (
+    "Ты кулинарный помощник: рецепты, замены ингредиентов, диеты, "
+    "тайминги, хранение продуктов. Отвечай кратко, по делу, на русском."
+)
 
 
 def _api_call(token: str, method: str, json_data: dict):

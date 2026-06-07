@@ -24,6 +24,15 @@ def init_db():
                 UNIQUE(user_id, recipe_id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS translations (
+                recipe_id TEXT NOT NULL,
+                lang TEXT NOT NULL DEFAULT 'ru',
+                translated_text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (recipe_id, lang)
+            )
+        """)
         conn.commit()
         _migrate_db(conn)
     logger.info("Database initialized")
@@ -130,6 +139,31 @@ def is_favorite(user_id: int, recipe_id: str) -> bool:
     except Exception as e:
         logger.error("Error checking favorite: %s", e)
         return False
+
+
+def get_translation(recipe_id: str, lang: str = "ru") -> str | None:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT translated_text FROM translations WHERE recipe_id = ? AND lang = ?",
+                (recipe_id, lang),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        logger.error("Error getting translation: %s", e)
+        return None
+
+
+def save_translation(recipe_id: str, lang: str, text: str):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO translations (recipe_id, lang, translated_text) VALUES (?, ?, ?)",
+                (recipe_id, lang, text),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("Error saving translation: %s", e)
 
 
 def _serialize_ingredients(recipe: dict) -> str:
