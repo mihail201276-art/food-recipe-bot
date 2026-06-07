@@ -72,7 +72,7 @@ async def search_prompt(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
+    query = (context.user_data.pop("voice_text", None) or update.message.text).strip()
     user_id = update.effective_user.id
     logger.info("User %s searching for: %s", user_id, query)
 
@@ -195,7 +195,7 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад", callback_data="back_search")])
+                      InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
 
     try:
         if image:
@@ -253,7 +253,7 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад", callback_data="back_search")])
+                      InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup([rate_row] + add_btns)
     )
@@ -292,7 +292,7 @@ async def remove_favorite_handler(update: Update, context: ContextTypes.DEFAULT_
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад", callback_data="back_search")])
+                      InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup(add_btns)
     )
@@ -405,7 +405,7 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад", callback_data="back_fav")])
+                      InlineKeyboardButton("← Назад к избранному", callback_data="back_fav")])
 
     try:
         if has_image:
@@ -859,7 +859,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info("Transcribed: %s", text)
     context.user_data["state"] = None
-    update.message.text = text.strip()
+    context.user_data["voice_text"] = text.strip()
     await search_recipes(update, context)
 
 
@@ -957,6 +957,9 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = int(fav.get("rating", 0) or 0)
         stars = " " + "⭐" * r if r else ""
         keyboard.append([InlineKeyboardButton(f"{fav['recipe_name']}{stars}", callback_data=f"fav_view_{fav['recipe_id']}")])
+
+    keyboard.append([InlineKeyboardButton("🛒 Список покупок", callback_data="shopping_list")])
+    keyboard.append([InlineKeyboardButton("📅 План на неделю", callback_data="meal_plan")])
 
     await query.message.delete()
     await context.bot.send_message(
