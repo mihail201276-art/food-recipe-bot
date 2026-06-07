@@ -13,14 +13,14 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = "Ты вежливый и профессиональный личный помощник, работающий в Telegram."
 
 
-def _call_proxyapi(message: str) -> str | None:
+def _call_proxyapi(message: str, model: str = "gpt-4o-mini") -> str | None:
     key = os.getenv("PROXYAPI_KEY")
     if not key:
         return None
     try:
         client = OpenAI(api_key=key, base_url="https://api.proxyapi.ru/openai/v1", timeout=15)
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": message},
@@ -28,7 +28,7 @@ def _call_proxyapi(message: str) -> str | None:
         )
         return resp.choices[0].message.content
     except Exception as e:
-        logger.warning("ProxyAPI failed: %s", e)
+        logger.warning("ProxyAPI %s failed: %s", model, e)
         return None
 
 
@@ -57,7 +57,11 @@ def _call_apifreellm(message: str) -> str | None:
 
 
 def get_llm_response(user_message: str) -> str:
-    reply = _call_proxyapi(user_message)
+    reply = _call_proxyapi(user_message, "gpt-4o-mini")
+    if reply:
+        return reply
+
+    reply = _call_proxyapi(user_message, "gemini/gemini-2.5-flash-lite")
     if reply:
         return reply
 
@@ -141,7 +145,7 @@ if __name__ == "__main__":
     import sys
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s): %(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     run_assistant_bot()
