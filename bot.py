@@ -13,7 +13,7 @@ import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, check_translation_limit, increment_translation_usage
+from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_translation_limit, increment_translation_usage
 from assistant_bot import run_assistant_bot
 import llm
 from llm import split_message, transcribe_audio, _call_proxyapi_vision
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 MEALDB_BASE = "https://www.themealdb.com/api/json/v1/1"
 MAX_RESULTS = 8
 TRANSLATE_DAILY_LIMIT = 20
+PREMIUM_DAILY_LIMIT = 100
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🔍 Поиск рецептов", "📚 Мои рецепты"],
@@ -60,7 +61,9 @@ async def help_command(update: Update, _context: ContextTypes.DEFAULT_TYPE):
         "🔍 <b>Фильтры</b> — поиск по категории, кухне, ингредиенту\n"
         "📸 <b>Фото продуктов</b> — сфоткай холодильник, ИИ скажет что приготовить\n"
         "🎤 <b>Голосовые сообщения</b> — продиктуй запрос\n"
-        "/settings — профиль (аллергии, диета)\n\n"
+        "/settings — профиль (аллергии, диета)\n"
+        "/premium — ⭐ премиум-доступ\n"
+        "/donate — ☕ поддержать проект\n\n"
         "Есть ещё @Smart_pomogator_bot — кулинарный помощник.",
         parse_mode="HTML",
     )
@@ -430,8 +433,10 @@ async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     logger.info("User %s translating recipe %s", user_id, recipe_id)
 
-    if not check_translation_limit(user_id, TRANSLATE_DAILY_LIMIT):
-        await query.message.reply_text(f"⚠️ Лимит переводов на сегодня ({TRANSLATE_DAILY_LIMIT} шт.) исчерпан. Попробуй завтра.")
+    profile = get_profile(user_id)
+    limit = PREMIUM_DAILY_LIMIT if profile.get("premium") else TRANSLATE_DAILY_LIMIT
+    if not check_translation_limit(user_id, limit):
+        await query.message.reply_text(f"⚠️ Лимит переводов на сегодня ({limit} шт.) исчерпан. Попробуй завтра.")
         return
 
     cached = get_translation(recipe_id, "ru")
@@ -801,11 +806,14 @@ async def share_recipe(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 async def settings_cmd(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     profile = get_profile(user_id)
+    badge = "⭐ Премиум" if profile.get("premium") else "—"
     text = (
         f"<b>⚙️ Настройки профиля</b>\n\n"
         f"🥜 Аллергии: {profile.get('allergies') or 'не указано'}\n"
         f"🥗 Диета: {profile.get('diet') or 'не указано'}\n"
-        f"🌾 Без глютена: {'да' if profile.get('gluten_free') else 'нет'}\n\n"
+        f"🌾 Без глютена: {'да' if profile.get('gluten_free') else 'нет'}\n"
+        f"💎 Статус: {badge}\n"
+        f"📊 Лимит переводов: {PREMIUM_DAILY_LIMIT if profile.get('premium') else TRANSLATE_DAILY_LIMIT}/день\n\n"
         "Выбери, что хочешь изменить:"
     )
     keyboard = [
@@ -841,6 +849,30 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_profile(user_id, "gluten_free", 0)
         await query.edit_message_text("✅ Профиль сброшен.")
         context.user_data.pop("prof_field", None)
+
+
+async def premium_cmd(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "<b>⭐ Премиум-доступ</b>\n\n"
+        "<b>Преимущества:</b>\n"
+        f"• {PREMIUM_DAILY_LIMIT} переводов рецептов в день (вместо {TRANSLATE_DAILY_LIMIT})\n"
+        "• Приоритетная обработка фото холодильника\n"
+        "• Доступ ко всем адаптациям рецептов\n"
+        "• Скоро: эксклюзивные функции\n\n"
+        "<b>Как получить:</b>\n"
+        "Напиши @mihail201276 — договоримся об активации премиума."
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def donate_cmd(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    url = os.getenv("DONATION_URL", "")
+    text = (
+        "<b>☕ Поддержать проект</b>\n\n"
+        "Если бот помогает тебе на кухне, можешь поддержать автора:\n"
+        f"{'🔗 ' + url if url else 'Свяжись с @mihail201276'}"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1071,6 +1103,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("settings", settings_cmd))
+    app.add_handler(CommandHandler("premium", premium_cmd))
+    app.add_handler(CommandHandler("donate", donate_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: food-recipe-bot
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ASSISTANT_BOT_TOKEN=${ASSISTANT_BOT_TOKEN}
+      - PROXYAPI_KEY=${PROXYAPI_KEY}
+      - APIFREEL_KEY=${APIFREEL_KEY}
+      - PORT=10000
+      - RENDER_EXTERNAL_URL=${RENDER_EXTERNAL_URL}
+    volumes:
+      - ./data:/app/data

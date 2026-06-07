@@ -70,6 +70,11 @@ def _migrate_db(conn):
             conn.execute(f"ALTER TABLE favorites ADD COLUMN {col} TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
+    for col in ["premium"]:
+        try:
+            conn.execute(f"ALTER TABLE user_profiles ADD COLUMN {col} INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
 
 
@@ -229,7 +234,7 @@ def get_profile(user_id: int) -> dict:
             row = conn.execute(
                 "SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)
             ).fetchone()
-            return dict(row) if row else {"allergies": "", "diet": "", "gluten_free": 0}
+            return dict(row) if row else {"allergies": "", "diet": "", "gluten_free": 0, "premium": 0}
     except Exception as e:
         logger.error("Error getting profile: %s", e)
         return {"allergies": "", "diet": "", "gluten_free": 0}
@@ -281,6 +286,21 @@ def increment_translation_usage(user_id: int):
             conn.commit()
     except Exception as e:
         logger.error("Error incrementing translation usage: %s", e)
+
+
+def set_premium(user_id: int, value: int = 1):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO user_profiles (user_id, allergies, diet, gluten_free, premium) "
+                "VALUES (?, COALESCE((SELECT allergies FROM user_profiles WHERE user_id=?), ''), "
+                "COALESCE((SELECT diet FROM user_profiles WHERE user_id=?), ''), "
+                "COALESCE((SELECT gluten_free FROM user_profiles WHERE user_id=?), 0), ?)",
+                (user_id, user_id, user_id, user_id, value),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("Error setting premium: %s", e)
 
 
 def _serialize_ingredients(recipe: dict) -> str:
