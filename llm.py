@@ -119,6 +119,21 @@ def split_message(text: str, limit: int = 4000) -> list[str]:
     return parts
 
 
+def generate_recipe(query: str) -> str | None:
+    system = (
+        "Ты профессиональный повар. Сгенерируй рецепт блюда по запросу пользователя. "
+        "Ответ оформи в таком формате:\n"
+        "<b>Название:</b> ...\n"
+        "<b>Категория:</b> ...\n"
+        "<b>Кухня:</b> ...\n"
+        "<b>Время готовки:</b> ...\n"
+        "<b>Ингредиенты:</b>\n• ...\n• ...\n"
+        "<b>Приготовление:</b>\n1. ...\n2. ...\n"
+        "Используй русский язык. Если запрос на английском — переведи название."
+    )
+    return get_llm_response(query, system)
+
+
 def get_llm_response(message: str, system_prompt: str = "") -> str:
     reply = _call_proxyapi(message, system_prompt, "gpt-4o-mini")
     if reply:

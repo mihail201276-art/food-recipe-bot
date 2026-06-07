@@ -107,7 +107,12 @@ async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     meals = data.get("meals", [])
     if not meals:
         logger.info("No results for query: %s", query)
-        await update.message.reply_text("Ничего не найдено. Попробуй другое название.")
+        context.user_data["ai_query"] = query
+        keyboard = [[InlineKeyboardButton("✨ Сгенерировать ИИ-рецепт", callback_data="generate_ai")]]
+        await update.message.reply_text(
+            "Ничего не найдено. Хочешь, я придумаю рецепт сам?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
         return
 
     meals = meals[:MAX_RESULTS]
@@ -198,7 +203,8 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
+                      InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
+    keyboard.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
 
     try:
         if image:
@@ -256,7 +262,8 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
+                      InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
+    add_btns.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup([rate_row] + add_btns)
     )
@@ -295,7 +302,8 @@ async def remove_favorite_handler(update: Update, context: ContextTypes.DEFAULT_
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
-                      InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
+                      InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
+    add_btns.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup(add_btns)
     )
@@ -1045,6 +1053,48 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def generate_ai_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_query = context.user_data.get("ai_query", "любое блюдо")
+    await query.edit_message_text("🧠 Думаю над рецептом...")
+    recipe = await asyncio.to_thread(llm.generate_recipe, user_query)
+    if not recipe or recipe.startswith("⚠"):
+        recipe = "Не удалось сгенерировать рецепт. Попробуй позже."
+    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search")]]
+    await query.edit_message_text(
+        recipe, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def ai_variation_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    recipe_id = query.data.replace("ai_variation_", "")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{MEALDB_BASE}/lookup.php", params={"i": recipe_id}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        await query.edit_message_text("Ошибка.")
+        return
+    meals = data.get("meals", [])
+    if not meals:
+        return
+    name = meals[0].get("strMeal", "блюдо")
+    await query.edit_message_text(f"🧠 Придумываю вариацию для «{name}»...")
+    recipe = await asyncio.to_thread(llm.generate_recipe, f"вариация {name}, другие ингредиенты")
+    if not recipe or recipe.startswith("⚠"):
+        recipe = "Не удалось сгенерировать рецепт."
+    keyboard = [[InlineKeyboardButton("← Назад к рецепту", callback_data=f"recipe_{recipe_id}")]]
+    await query.edit_message_text(
+        recipe, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -1090,6 +1140,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await back_to_search(update, context)
     elif data == "back_fav":
         await back_to_favorites(update, context)
+    elif data == "generate_ai":
+        await generate_ai_recipe(update, context)
+    elif data.startswith("ai_variation_"):
+        await ai_variation_recipe(update, context)
     else:
         await query.answer()
         await query.edit_message_text(f"Неизвестная команда: {data}. /start")
