@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import httpx
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, LabeledPrice
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 
 from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_translation_limit, increment_translation_usage
 from assistant_bot import run_assistant_bot
@@ -852,6 +852,11 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def premium_cmd(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    profile = get_profile(user_id)
+    if profile.get("premium"):
+        await update.message.reply_text("⭐ У тебя уже есть премиум! Спасибо за поддержку.", parse_mode="HTML")
+        return
     text = (
         "<b>⭐ Премиум-доступ</b>\n\n"
         "<b>Преимущества:</b>\n"
@@ -859,10 +864,49 @@ async def premium_cmd(update: Update, _context: ContextTypes.DEFAULT_TYPE):
         "• Приоритетная обработка фото холодильника\n"
         "• Доступ ко всем адаптациям рецептов\n"
         "• Скоро: эксклюзивные функции\n\n"
-        "<b>Как получить:</b>\n"
-        "Напиши @mihail201276 — договоримся об активации премиума."
+        "<b>Цена:</b> 50 ⭐ Telegram Stars — разовая оплата навсегда"
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    keyboard = [[InlineKeyboardButton("⭐ Купить премиум за 50 Stars", callback_data="premium_buy")]]
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def premium_buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    profile = get_profile(user_id)
+    if profile.get("premium"):
+        await query.edit_message_text("⭐ У тебя уже есть премиум!", parse_mode="HTML")
+        return
+
+    await context.bot.send_invoice(
+        chat_id=user_id,
+        title="⭐ Премиум-доступ",
+        description=f"Премиум в Food Recipe Bot: {PREMIUM_DAILY_LIMIT} переводов/день и все функции",
+        payload=f"premium_{user_id}",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice("⭐ Премиум навсегда", 50)],
+    )
+    await query.edit_message_text("💳 Отправлен счёт на оплату. Подтверди в Telegram.", parse_mode="HTML")
+
+
+async def pre_checkout_handler(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+
+async def handle_successful_payment(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    payload = update.message.successful_payment.invoice_payload
+    logger.info("Successful payment from user %s: %s", user_id, payload)
+    set_premium(user_id, 1)
+    await update.message.reply_text(
+        "⭐ <b>Премиум активирован!</b>\n\n"
+        f"Тебе доступно {PREMIUM_DAILY_LIMIT} переводов в день. Спасибо за поддержку!",
+        parse_mode="HTML",
+    )
 
 
 async def donate_cmd(update: Update, _context: ContextTypes.DEFAULT_TYPE):
@@ -1038,6 +1082,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await share_recipe(update, context)
     elif data.startswith("prof_"):
         await settings_callback(update, context)
+    elif data == "premium_buy":
+        await premium_buy_handler(update, context)
     elif data == "back_main":
         await back_to_main(update, context)
     elif data == "back_search":
@@ -1105,6 +1151,8 @@ def main():
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("premium", premium_cmd))
     app.add_handler(CommandHandler("donate", donate_cmd))
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
