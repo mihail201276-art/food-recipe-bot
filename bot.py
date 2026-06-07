@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import asyncio
 import threading
 from html import escape
 
@@ -14,6 +15,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating
 from assistant_bot import run_assistant_bot
+import llm
 
 import logging
 
@@ -149,13 +151,14 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(text) > 950 and image:
         text = text[:950] + "..."
 
-    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search")]]
+    keyboard = []
     if fav:
-        rate_row = [InlineKeyboardButton("⭐" * s + "☆" * (5 - s), callback_data=f"rate_{recipe_id}_{s}") for s in range(1, 6)]
-        keyboard.insert(0, rate_row)
-        keyboard.insert(1, [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")])
+        keyboard.append([InlineKeyboardButton("⭐" * s + "☆" * (5 - s), callback_data=f"rate_{recipe_id}_{s}") for s in range(1, 6)])
+        keyboard.append([InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")])
     else:
-        keyboard.insert(0, [InlineKeyboardButton("❤️ Добавить в избранное", callback_data=f"fav_add_{recipe_id}")])
+        keyboard.append([InlineKeyboardButton("❤️ Добавить в избранное", callback_data=f"fav_add_{recipe_id}")])
+    keyboard.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")])
+    keyboard.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
 
     try:
         if image:
@@ -208,6 +211,7 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=InlineKeyboardMarkup([
             rate_row,
             [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")],
+            [InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")],
             [InlineKeyboardButton("← Назад к поиску", callback_data="back_search")],
         ])
     )
@@ -230,6 +234,7 @@ async def remove_favorite_handler(update: Update, _context: ContextTypes.DEFAULT
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup([
             [fav_btn],
+            [InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")],
             [InlineKeyboardButton("← Назад к поиску", callback_data="back_search")],
         ])
     )
@@ -331,6 +336,7 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         rate_row,
         [InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")],
+        [InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")],
         [InlineKeyboardButton("← Назад к избранному", callback_data="back_fav")],
     ]
 
@@ -348,6 +354,60 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Failed to view favorite %s: %s", recipe_id, e)
         await query.edit_message_text("Ошибка при загрузке рецепта.")
+
+
+async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    recipe_id = query.data.replace("translate_", "")
+    user_id = query.from_user.id
+    logger.info("User %s translating recipe %s", user_id, recipe_id)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{MEALDB_BASE}/lookup.php", params={"i": recipe_id}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.error("Failed to fetch recipe %s: %s", recipe_id, e)
+        await query.message.reply_text("Ошибка загрузки рецепта.")
+        return
+
+    meals = data.get("meals", [])
+    if not meals:
+        await query.message.reply_text("Рецепт не найден.")
+        return
+
+    meal = meals[0]
+    name = meal.get("strMeal") or "Unknown"
+    category = meal.get("strCategory") or ""
+    area = meal.get("strArea") or ""
+    instructions = meal.get("strInstructions") or ""
+
+    ings = []
+    for i in range(1, 21):
+        ing = meal.get(f"strIngredient{i}")
+        meas = meal.get(f"strMeasure{i}")
+        if ing and ing.strip():
+            ings.append(f"{ing}{' — ' + meas if meas else ''}")
+
+    recipe_text = (
+        f"Recipe: {name}\n"
+        f"Category: {category}\n"
+        f"Cuisine: {area}\n"
+        f"Ingredients:\n" + "\n".join(ings) + "\n"
+        f"Instructions:\n{instructions}"
+    )
+
+    system_prompt = (
+        "Ты переводчик рецептов. Переведи следующий рецепт с английского на русский. "
+        "Сохрани структуру: название, категория, кухня, ингредиенты, инструкция. "
+        "Ответ дай только на русском, без комментариев."
+    )
+
+    await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+    reply = await asyncio.to_thread(llm.get_llm_response, recipe_text, system_prompt)
+    await query.message.reply_text(reply)
 
 
 async def back_to_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -403,6 +463,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await view_favorite(update, context)
     elif data.startswith("rate_"):
         await rate_recipe(update, context)
+    elif data.startswith("translate_"):
+        await translate_recipe(update, context)
     elif data == "back_search":
         await back_to_search(update, context)
     elif data == "back_fav":
