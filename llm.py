@@ -7,20 +7,71 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 
+PROXYAPI_BASE = "https://api.proxyapi.ru/openai/v1"
+
+def _log_usage(model: str, usage):
+    if usage:
+        logger.info("TOKEN_USAGE model=%s prompt=%d completion=%d total=%d",
+                     model, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens)
+
+
 def _call_proxyapi(message: str, system_prompt: str, model: str = "gpt-4o-mini") -> str | None:
     key = os.getenv("PROXYAPI_KEY")
     if not key:
         return None
     try:
-        client = OpenAI(api_key=key, base_url="https://api.proxyapi.ru/openai/v1", timeout=15)
+        client = OpenAI(api_key=key, base_url=PROXYAPI_BASE, timeout=30)
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": message})
         resp = client.chat.completions.create(model=model, messages=messages)
+        _log_usage(model, resp.usage)
         return resp.choices[0].message.content
     except Exception as e:
         logger.warning("ProxyAPI %s failed: %s", model, e)
+        return None
+
+
+def _call_proxyapi_vision(image_url: str, prompt: str = "Что это за продукты? Что можно приготовить?") -> str | None:
+    key = os.getenv("PROXYAPI_KEY")
+    if not key:
+        return None
+    try:
+        client = OpenAI(api_key=key, base_url=PROXYAPI_BASE, timeout=30)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }],
+            max_tokens=500,
+        )
+        _log_usage("gpt-4o-mini-vision", resp.usage)
+        return resp.choices[0].message.content
+    except Exception as e:
+        logger.warning("ProxyAPI vision failed: %s", e)
+        return None
+
+
+def transcribe_audio(file_path: str) -> str | None:
+    key = os.getenv("PROXYAPI_KEY")
+    if not key:
+        return None
+    try:
+        with open(file_path, "rb") as f:
+            client = OpenAI(api_key=key, base_url=PROXYAPI_BASE, timeout=60)
+            resp = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                language="ru",
+            )
+            return resp.text
+    except Exception as e:
+        logger.warning("Whisper failed: %s", e)
         return None
 
 

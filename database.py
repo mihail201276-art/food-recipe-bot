@@ -42,6 +42,23 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id INTEGER PRIMARY KEY,
+                allergies TEXT DEFAULT '',
+                diet TEXT DEFAULT '',
+                gluten_free INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS translation_usage (
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                count INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, date)
+            )
+        """)
         conn.commit()
         _migrate_db(conn)
     logger.info("Database initialized")
@@ -203,6 +220,67 @@ def get_history(user_id: int) -> list[dict]:
     except Exception as e:
         logger.error("Error getting history: %s", e)
         return []
+
+
+def get_profile(user_id: int) -> dict:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return dict(row) if row else {"allergies": "", "diet": "", "gluten_free": 0}
+    except Exception as e:
+        logger.error("Error getting profile: %s", e)
+        return {"allergies": "", "diet": "", "gluten_free": 0}
+
+
+def save_profile(user_id: int, field: str, value: str | int):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO user_profiles (user_id, allergies, diet, gluten_free) "
+                "VALUES (?, COALESCE((SELECT allergies FROM user_profiles WHERE user_id=?), ''), "
+                "COALESCE((SELECT diet FROM user_profiles WHERE user_id=?), ''), "
+                "COALESCE((SELECT gluten_free FROM user_profiles WHERE user_id=?), 0))",
+                (user_id, user_id, user_id, user_id),
+            )
+            conn.execute(
+                f"UPDATE user_profiles SET {field} = ? WHERE user_id = ?",
+                (value, user_id),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("Error saving profile: %s", e)
+
+
+def check_translation_limit(user_id: int, limit: int = 20) -> bool:
+    try:
+        today = __import__("datetime").date.today().isoformat()
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT count FROM translation_usage WHERE user_id = ? AND date = ?",
+                (user_id, today),
+            ).fetchone()
+            count = row[0] if row else 0
+            return count < limit
+    except Exception as e:
+        logger.error("Error checking translation limit: %s", e)
+        return True
+
+
+def increment_translation_usage(user_id: int):
+    try:
+        today = __import__("datetime").date.today().isoformat()
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO translation_usage (user_id, date, count) "
+                "VALUES (?, ?, COALESCE((SELECT count FROM translation_usage WHERE user_id=? AND date=?), 0) + 1)",
+                (user_id, today, user_id, today),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("Error incrementing translation usage: %s", e)
 
 
 def _serialize_ingredients(recipe: dict) -> str:
