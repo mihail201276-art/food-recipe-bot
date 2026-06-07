@@ -37,8 +37,32 @@ def _call_proxyapi_vision(image_url: str, prompt: str = "Что это за пр
     key = os.getenv("PROXYAPI_KEY")
     if not key:
         return None
+    client = OpenAI(api_key=key, base_url=PROXYAPI_BASE, timeout=30)
+
+    # новый API Responses
     try:
-        client = OpenAI(api_key=key, base_url=PROXYAPI_BASE, timeout=30)
+        resp = client.responses.create(
+            model="gpt-4o-mini",
+            input=[{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": image_url},
+                ],
+            }],
+        )
+        if hasattr(resp, "usage"):
+            _log_usage("gpt-4o-mini-vision", resp.usage)
+        if hasattr(resp, "output_text"):
+            return resp.output_text
+        if resp.output and len(resp.output) > 0:
+            return resp.output[0].content[0].text if hasattr(resp.output[0], "content") else str(resp.output[0])
+        return None
+    except Exception as e:
+        logger.warning("ProxyAPI vision (responses API) failed: %s", e)
+
+    # fallback на старый Chat Completions
+    try:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{
@@ -53,7 +77,7 @@ def _call_proxyapi_vision(image_url: str, prompt: str = "Что это за пр
         _log_usage("gpt-4o-mini-vision", resp.usage)
         return resp.choices[0].message.content
     except Exception as e:
-        logger.warning("ProxyAPI vision failed: %s", e)
+        logger.warning("ProxyAPI vision (chat) failed: %s", e)
         return None
 
 
