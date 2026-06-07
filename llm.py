@@ -48,6 +48,26 @@ def _call_apifreellm(message: str) -> str | None:
         return None
 
 
+def split_message(text: str, limit: int = 4000) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    parts = []
+    while text:
+        if len(text) <= limit:
+            parts.append(text)
+            break
+        split_at = text.rfind("\n", 0, limit)
+        if split_at == -1:
+            split_at = text.rfind(". ", 0, limit)
+        if split_at == -1:
+            split_at = limit
+        else:
+            split_at += 1
+        parts.append(text[:split_at])
+        text = text[split_at:].strip()
+    return parts
+
+
 def get_llm_response(message: str, system_prompt: str = "") -> str:
     reply = _call_proxyapi(message, system_prompt, "gpt-4o-mini")
     if reply:

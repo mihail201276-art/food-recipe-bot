@@ -33,6 +33,15 @@ def init_db():
                 PRIMARY KEY (recipe_id, lang)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
         _migrate_db(conn)
     logger.info("Database initialized")
@@ -164,6 +173,36 @@ def save_translation(recipe_id: str, lang: str, text: str):
             conn.commit()
     except Exception as e:
         logger.error("Error saving translation: %s", e)
+
+
+def add_history(user_id: int, role: str, content: str):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
+                (user_id, role, content),
+            )
+            conn.execute(
+                "DELETE FROM chat_history WHERE user_id = ? AND id NOT IN (SELECT id FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT 10)",
+                (user_id, user_id),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("Error adding history: %s", e)
+
+
+def get_history(user_id: int) -> list[dict]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id ASC",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("Error getting history: %s", e)
+        return []
 
 
 def _serialize_ingredients(recipe: dict) -> str:

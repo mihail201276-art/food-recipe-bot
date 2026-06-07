@@ -4,7 +4,8 @@ import logging
 
 from dotenv import load_dotenv
 import httpx
-from llm import get_llm_response
+from llm import get_llm_response, split_message
+from database import add_history, get_history
 
 load_dotenv()
 
@@ -31,6 +32,7 @@ def handle_update(update: dict, token: str):
     if not msg:
         return
     chat_id = msg["chat"]["id"]
+    user_id = msg["from"]["id"]
     text = msg.get("text", "")
 
     if not text:
@@ -39,7 +41,24 @@ def handle_update(update: dict, token: str):
     if text == "/start":
         _api_call(token, "sendMessage", {
             "chat_id": chat_id,
-            "text": "Привет! Я твой личный помощник. Задавай любые вопросы.",
+            "text": "Привет! Я кулинарный помощник. Спрашивай про рецепты, замены ингредиентов, диеты, тайминги, хранение продуктов.",
+        })
+        return
+
+    if text == "/clear":
+        add_history(user_id, "system", "")  # dummy call to trigger cleanup later
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent / "favorites.db"
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
+                conn.commit()
+        except Exception:
+            pass
+        _api_call(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": "История диалога очищена.",
         })
         return
 
@@ -48,11 +67,28 @@ def handle_update(update: dict, token: str):
         "action": "typing",
     })
 
-    reply = get_llm_response(text, SYSTEM_PROMPT)
-    _api_call(token, "sendMessage", {
-        "chat_id": chat_id,
-        "text": reply,
-    })
+    add_history(user_id, "user", text)
+    history = get_history(user_id)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for h in history:
+        messages.append({"role": h["role"], "content": h["content"]})
+
+    # build single prompt with history
+    prompt_parts = []
+    for m in messages:
+        if m["role"] == "system":
+            continue
+        prompt_parts.append(f"{m['role']}: {m['content']}")
+    full_prompt = "\n".join(prompt_parts)
+
+    reply = get_llm_response(full_prompt, SYSTEM_PROMPT)
+    add_history(user_id, "assistant", reply)
+
+    for part in split_message(reply):
+        _api_call(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": part,
+        })
 
 
 def run_assistant_bot():
