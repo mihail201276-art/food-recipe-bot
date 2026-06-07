@@ -157,7 +157,13 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     image = meal.get("strMealThumb") or ""
     youtube = meal.get("strYoutube") or ""
 
-    parts = [f"<b>{escape(name)}</b>"]
+    # фото отдельно — завлекает
+    await query.message.delete()
+    if image:
+        await context.bot.send_photo(chat_id=query.message.chat_id, photo=image, caption=f"<b>{escape(name)}</b>", parse_mode="HTML")
+
+    # полный рецепт текстом, ничего не обрезаем
+    parts = []
     if category:
         parts.append(f"🏷 Категория: {escape(category)}")
     if area:
@@ -172,11 +178,8 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ings:
         parts.append("<b>Ингредиенты:</b>\n" + "\n".join(ings))
 
-    instr_text = escape(instructions[:500]) if instructions else ""
-    if instructions and len(instructions) > 500:
-        instr_text += "..."
-    if instr_text.strip():
-        parts.append(f"<b>Приготовление:</b>\n{instr_text}")
+    if instructions:
+        parts.append(f"<b>Приготовление:</b>\n{escape(instructions)}")
 
     fav = is_favorite(user_id, recipe_id)
     if fav:
@@ -187,8 +190,6 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts.append(f"▶ <a href='{escape(youtube)}'>Смотреть видео</a>")
 
     text = "\n\n".join(parts)
-    if len(text) > 950 and image:
-        text = text[:950] + "..."
 
     keyboard = []
     if fav:
@@ -196,8 +197,6 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")])
     else:
         keyboard.append([InlineKeyboardButton("❤️ Добавить в избранное", callback_data=f"fav_add_{recipe_id}")])
-    if instructions and len(instructions) > 500:
-        keyboard.append([InlineKeyboardButton("📖 Полный рецепт", callback_data=f"full_recipe_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🥛 Без лактозы", callback_data=f"adapt_lactose_{recipe_id}"),
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
@@ -206,19 +205,15 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
 
-    try:
-        if image:
-            msg = await query.message.reply_photo(photo=image, caption=text[:1024], parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-            logger.info("Recipe %s photo sent, msg_id=%s", recipe_id, msg.message_id)
-            await query.message.delete()
-        else:
-            await query.edit_message_text(text[:4000], parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception as e:
-        logger.error("Failed to show recipe: %s", e)
-        try:
-            await query.edit_message_text("Не удалось показать рецепт.")
-        except Exception:
-            pass
+    chunks = split_message(text, 4000)
+    for i, chunk in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=chunk,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard) if is_last else None,
+        )
 
 
 async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
