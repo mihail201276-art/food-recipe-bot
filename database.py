@@ -1,10 +1,13 @@
 import sqlite3
 import logging
+import threading
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "favorites.db"
 
 logger = logging.getLogger(__name__)
+
+_db_lock = threading.Lock()
 
 
 def init_db():
@@ -80,7 +83,7 @@ def _migrate_db(conn):
 
 def add_favorite(user_id: int, recipe: dict) -> bool:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             cur = conn.execute(
                 """INSERT OR IGNORE INTO favorites
                    (user_id, recipe_id, recipe_name, recipe_image, recipe_area, recipe_category, ingredients, instructions, youtube_url)
@@ -108,7 +111,7 @@ def add_favorite(user_id: int, recipe: dict) -> bool:
 
 def remove_favorite(user_id: int, recipe_id: str) -> bool:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             cursor = conn.execute(
                 "DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?",
                 (user_id, recipe_id),
@@ -242,19 +245,18 @@ def get_profile(user_id: int) -> dict:
         return {"allergies": "", "diet": "", "gluten_free": 0}
 
 
+ALLOWED_PROFILE_FIELDS = {"allergies", "diet", "gluten_free", "premium"}
+
 def save_profile(user_id: int, field: str, value: str | int):
+    if field not in ALLOWED_PROFILE_FIELDS:
+        logger.error("Attempt to set invalid profile field: %s", field)
+        return
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO user_profiles (user_id, allergies, diet, gluten_free) "
-                "VALUES (?, COALESCE((SELECT allergies FROM user_profiles WHERE user_id=?), ''), "
-                "COALESCE((SELECT diet FROM user_profiles WHERE user_id=?), ''), "
-                "COALESCE((SELECT gluten_free FROM user_profiles WHERE user_id=?), 0))",
-                (user_id, user_id, user_id, user_id),
-            )
-            conn.execute(
-                f"UPDATE user_profiles SET {field} = ? WHERE user_id = ?",
-                (value, user_id),
+                f"INSERT INTO user_profiles (user_id, {field}) VALUES (?, ?) "
+                f"ON CONFLICT(user_id) DO UPDATE SET {field} = excluded.{field}",
+                (user_id, value),
             )
             conn.commit()
     except Exception as e:
@@ -291,14 +293,14 @@ def increment_translation_usage(user_id: int):
 
 
 def set_premium(user_id: int, value: int = 1):
+    if "premium" not in ALLOWED_PROFILE_FIELDS:
+        return
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO user_profiles (user_id, allergies, diet, gluten_free, premium) "
-                "VALUES (?, COALESCE((SELECT allergies FROM user_profiles WHERE user_id=?), ''), "
-                "COALESCE((SELECT diet FROM user_profiles WHERE user_id=?), ''), "
-                "COALESCE((SELECT gluten_free FROM user_profiles WHERE user_id=?), 0), ?)",
-                (user_id, user_id, user_id, user_id, value),
+                "INSERT INTO user_profiles (user_id, premium) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET premium = excluded.premium",
+                (user_id, value),
             )
             conn.commit()
     except Exception as e:

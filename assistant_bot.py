@@ -3,13 +3,14 @@ import time
 import logging
 
 from dotenv import load_dotenv
-import httpx
 from llm import get_llm_response, split_message
 from database import add_history, get_history
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+_http = httpx.Client(timeout=30)
 
 SYSTEM_PROMPT = (
     "Ты кулинарный помощник: рецепты, замены ингредиентов, диеты, "
@@ -18,13 +19,11 @@ SYSTEM_PROMPT = (
 
 
 def _api_call(token: str, method: str, json_data: dict):
-    with httpx.Client() as client:
-        r = client.post(
-            f"https://api.telegram.org/bot{token}/{method}",
-            json=json_data,
-            timeout=30,
-        )
-        return r.json()
+    r = _http.post(
+        f"https://api.telegram.org/bot{token}/{method}",
+        json=json_data,
+    )
+    return r.json()
 
 
 def handle_update(update: dict, token: str):

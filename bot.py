@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 
 MEALDB_BASE = "https://www.themealdb.com/api/json/v1/1"
 COCKTAILDB_BASE = "https://www.thecocktaildb.com/api/json/v1/1"
-MAX_RESULTS = 8
-TRANSLATE_DAILY_LIMIT = 20
-PREMIUM_DAILY_LIMIT = 100
+MAX_RESULTS = int(os.getenv("MAX_RESULTS", "8"))
+TRANSLATE_DAILY_LIMIT = int(os.getenv("TRANSLATE_DAILY_LIMIT", "20"))
+PREMIUM_DAILY_LIMIT = int(os.getenv("PREMIUM_DAILY_LIMIT", "100"))
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🔍 Поиск рецептов", "📚 Мои рецепты"],
