@@ -3,6 +3,7 @@ import os
 import re
 import asyncio
 import base64
+import io
 import threading
 from html import escape
 
@@ -1133,16 +1134,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action("typing")
 
     file = await update.message.photo[-1].get_file()
-    token = context.bot.token
-    file_url = f"https://api.telegram.org/file/bot{token}/{file.file_path}"
-
-    # скачиваем фото, передаём base64 — LLM не авторизована на Telegram API
+    buf = io.BytesIO()
     try:
-        async with httpx.AsyncClient() as client:
-            img_resp = await client.get(file_url, timeout=30)
-            img_resp.raise_for_status()
-            b64 = base64.b64encode(img_resp.content).decode()
-            data_uri = f"data:image/jpeg;base64,{b64}"
+        await file.download_to_memory(buf)
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode()
+        data_uri = f"data:image/jpeg;base64,{b64}"
     except Exception as e:
         logger.error("Failed to download photo: %s", e)
         await update.message.reply_text("Не удалось загрузить фото.")
