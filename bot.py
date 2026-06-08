@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import asyncio
+import base64
 import threading
 from html import escape
 
@@ -1129,13 +1130,26 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info("User %s sent photo", user_id)
 
+    await update.message.reply_chat_action("typing")
+
     file = await update.message.photo[-1].get_file()
     token = context.bot.token
     file_url = f"https://api.telegram.org/file/bot{token}/{file.file_path}"
 
-    await update.message.reply_chat_action("typing")
+    # скачиваем фото, передаём base64 — LLM не авторизована на Telegram API
+    try:
+        async with httpx.AsyncClient() as client:
+            img_resp = await client.get(file_url, timeout=30)
+            img_resp.raise_for_status()
+            b64 = base64.b64encode(img_resp.content).decode()
+            data_uri = f"data:image/jpeg;base64,{b64}"
+    except Exception as e:
+        logger.error("Failed to download photo: %s", e)
+        await update.message.reply_text("Не удалось загрузить фото.")
+        return
+
     prompt = "Посмотри на фото продуктов. Предложи 3-5 блюд, которые можно из них приготовить. Напиши на русском, кратко."
-    reply = await asyncio.to_thread(_call_proxyapi_vision, file_url, prompt)
+    reply = await asyncio.to_thread(_call_proxyapi_vision, data_uri, prompt)
     if not reply:
         await update.message.reply_text("Не удалось проанализировать фото.")
         return
