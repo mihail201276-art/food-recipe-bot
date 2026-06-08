@@ -223,7 +223,8 @@ async def show_cocktail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts.append(f"<b>Приготовление:</b>\n{escape(instructions)}")
 
     text = "\n\n".join(parts)
-    keyboard = [[InlineKeyboardButton("🎲 Случайный коктейль", callback_data="random_drink"),
+    keyboard = [[InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"transdrink_{drink_id}")],
+                 [InlineKeyboardButton("🎲 Случайный коктейль", callback_data="random_drink"),
                   InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")],
                  [InlineKeyboardButton("← К коктейлям", callback_data="back_cocktail")]]
     chunks = split_message(text, 4000)
@@ -693,6 +694,69 @@ async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply = await asyncio.to_thread(llm.get_llm_response, recipe_text, system_prompt)
     increment_translation_usage(user_id)
     save_translation(recipe_id, "ru", reply)
+
+    text = f"<b>🌐 Перевод на русский:</b>\n\n{reply}"
+    for chunk in split_message(text, 4000):
+        await query.message.reply_text(chunk, parse_mode="HTML")
+
+
+async def translate_cocktail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    drink_id = query.data.replace("transdrink_", "")
+    user_id = query.from_user.id
+
+    profile = get_profile(user_id)
+    limit = PREMIUM_DAILY_LIMIT if profile.get("premium") else TRANSLATE_DAILY_LIMIT
+    if not check_translation_limit(user_id, limit):
+        await query.message.reply_text(f"⚠️ Лимит переводов на сегодня ({limit} шт.) исчерпан.")
+        return
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{COCKTAILDB_BASE}/lookup.php", params={"i": drink_id}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.error("Failed to fetch cocktail %s: %s", drink_id, e)
+        await query.message.reply_text("Ошибка.")
+        return
+
+    drinks = data.get("drinks", [])
+    if not drinks:
+        return
+
+    d = drinks[0]
+    name = d.get("strDrink") or ""
+    category = d.get("strCategory") or ""
+    alcoholic = d.get("strAlcoholic") or ""
+    glass = d.get("strGlass") or ""
+    instructions = d.get("strInstructions") or ""
+
+    ings = []
+    for i in range(1, 16):
+        ing = d.get(f"strIngredient{i}")
+        meas = d.get(f"strMeasure{i}")
+        if ing and ing.strip():
+            ings.append(f"{ing}{' — ' + meas if meas else ''}")
+
+    drink_text = (
+        f"Drink: {name}\n"
+        f"Category: {category}\n"
+        f"Type: {alcoholic}\n"
+        f"Glass: {glass}\n"
+        f"Ingredients:\n" + "\n".join(ings) + "\n"
+        f"Instructions:\n{instructions}"
+    )
+
+    system = (
+        "Ты переводчик рецептов коктейлей. Переведи на русский. "
+        "Сохрани структуру. Используй <b> для заголовков. Только русский, без комментариев."
+    )
+
+    await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+    reply = await asyncio.to_thread(llm.get_llm_response, drink_text, system)
+    increment_translation_usage(user_id)
 
     text = f"<b>🌐 Перевод на русский:</b>\n\n{reply}"
     for chunk in split_message(text, 4000):
@@ -1342,6 +1406,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await back_to_favorites(update, context)
     elif data.startswith("ai_variation_"):
         await ai_variation_recipe(update, context)
+    elif data.startswith("transdrink_"):
+        await translate_cocktail(update, context)
     elif data.startswith("drink_"):
         await show_cocktail(update, context)
     elif data == "random_drink":
