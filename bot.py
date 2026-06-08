@@ -39,7 +39,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🔍 Поиск рецептов", "📚 Мои рецепты"],
      ["🍳 Что приготовить", "🎲 Удиви меня"],
      ["🍸 Коктейли", "🔍 Фильтры"],
-     ["❓ Помощь"]],
+     ["❓ Помощь", "🔄 Перезапустить"]],
     resize_keyboard=True,
 )
 
@@ -121,7 +121,8 @@ async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🧠 В TheMealDB ничего нет, придумываю рецепт через ИИ...")
         recipe = await asyncio.to_thread(llm.generate_recipe, query)
         if recipe and not recipe.startswith("⚠"):
-            keyboard = [[InlineKeyboardButton("🔍 Новый поиск", callback_data="back_search")]]
+            keyboard = [[InlineKeyboardButton("🔍 Новый поиск", callback_data="back_search"),
+                          InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")]]
             await update.message.reply_text(
                 recipe, parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(keyboard),
@@ -223,11 +224,14 @@ async def show_cocktail(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "\n\n".join(parts)
     keyboard = [[InlineKeyboardButton("🎲 Случайный коктейль", callback_data="random_drink"),
-                  InlineKeyboardButton("← К коктейлям", callback_data="back_cocktail")]]
-    for chunk in split_message(text, 4000):
+                  InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")],
+                 [InlineKeyboardButton("← К коктейлям", callback_data="back_cocktail")]]
+    chunks = split_message(text, 4000)
+    for i, chunk in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
         await context.bot.send_message(
             chat_id=query.message.chat_id, text=chunk, parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard) if chunk == text[-min(len(text), 4000):] else None,
+            reply_markup=InlineKeyboardMarkup(keyboard) if is_last else None,
         )
 
 
@@ -392,7 +396,8 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
                       InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
-    keyboard.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
+    keyboard.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search"),
+                      InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")])
 
     chunks = split_message(text, 4000)
     for i, chunk in enumerate(chunks):
@@ -447,7 +452,8 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
                       InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
-    add_btns.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
+    add_btns.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search"),
+                      InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")])
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup([rate_row] + add_btns)
     )
@@ -487,7 +493,8 @@ async def remove_favorite_handler(update: Update, context: ContextTypes.DEFAULT_
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
                       InlineKeyboardButton("✨ Вариация", callback_data=f"ai_variation_{recipe_id}")])
-    add_btns.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search")])
+    add_btns.append([InlineKeyboardButton("← Назад к поиску", callback_data="back_search"),
+                      InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")])
     await query.edit_message_reply_markup(
         reply_markup=InlineKeyboardMarkup(add_btns)
     )
@@ -601,6 +608,7 @@ async def view_favorite(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🔗 Поделиться", callback_data=f"share_{recipe_id}"),
                       InlineKeyboardButton("← Назад к избранному", callback_data="back_fav")])
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")])
 
     try:
         if has_image:
@@ -1233,6 +1241,7 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard.append([InlineKeyboardButton("🛒 Список покупок", callback_data="shopping_list")])
     keyboard.append([InlineKeyboardButton("📅 План на неделю", callback_data="meal_plan")])
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")])
 
     await query.message.delete()
     await context.bot.send_message(
@@ -1250,7 +1259,8 @@ async def generate_ai_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE)
     recipe = await asyncio.to_thread(llm.generate_recipe, user_query)
     if not recipe or recipe.startswith("⚠"):
         recipe = "Не удалось сгенерировать рецепт. Попробуй позже."
-    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search")]]
+    keyboard = [[InlineKeyboardButton("← Назад к поиску", callback_data="back_search"),
+                  InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")]]
     await query.edit_message_text(
         recipe, parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -1277,7 +1287,8 @@ async def ai_variation_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE
     recipe = await asyncio.to_thread(llm.generate_recipe, f"вариация {name}, другие ингредиенты")
     if not recipe or recipe.startswith("⚠"):
         recipe = "Не удалось сгенерировать рецепт."
-    keyboard = [[InlineKeyboardButton("← Назад к рецепту", callback_data=f"recipe_{recipe_id}")]]
+    keyboard = [[InlineKeyboardButton("← Назад к рецепту", callback_data=f"recipe_{recipe_id}"),
+                  InlineKeyboardButton("🏠 Главное меню", callback_data="back_main")]]
     await query.edit_message_text(
         recipe, parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -1389,6 +1400,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "← На главную":
         context.user_data.pop("state", None)
         await update.message.reply_text("Главное меню:", reply_markup=MAIN_KEYBOARD)
+    elif text == "🔄 Перезапустить":
+        context.user_data.clear()
+        await start(update, context)
     elif text == "❓ Помощь":
         context.user_data.pop("state", None)
         await help_command(update, context)
