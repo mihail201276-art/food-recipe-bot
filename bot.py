@@ -28,6 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MEALDB_BASE = "https://www.themealdb.com/api/json/v1/1"
+COCKTAILDB_BASE = "https://www.thecocktaildb.com/api/json/v1/1"
 MAX_RESULTS = 8
 TRANSLATE_DAILY_LIMIT = 20
 PREMIUM_DAILY_LIMIT = 100
@@ -35,7 +36,15 @@ PREMIUM_DAILY_LIMIT = 100
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🔍 Поиск рецептов", "📚 Мои рецепты"],
      ["🍳 Что приготовить", "🎲 Удиви меня"],
-     ["🔍 Фильтры", "❓ Помощь"]],
+     ["🍸 Коктейли", "🔍 Фильтры"],
+     ["❓ Помощь"]],
+    resize_keyboard=True,
+)
+
+COCKTAIL_KEYBOARD = ReplyKeyboardMarkup(
+    [["🔍 Поиск коктейлей", "🎲 Случайный коктейль"],
+     ["🍹 Алкогольные", "🧃 Безалкогольные"],
+     ["← На главную"]],
     resize_keyboard=True,
 )
 
@@ -106,13 +115,17 @@ async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     meals = data.get("meals", [])
     if not meals:
-        logger.info("No results for query: %s", query)
-        context.user_data["ai_query"] = query
-        keyboard = [[InlineKeyboardButton("✨ Сгенерировать ИИ-рецепт", callback_data="generate_ai")]]
-        await update.message.reply_text(
-            "Ничего не найдено. Хочешь, я придумаю рецепт сам?",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+        logger.info("No results for query, generating via AI: %s", query)
+        await update.message.reply_text("🧠 В TheMealDB ничего нет, придумываю рецепт через ИИ...")
+        recipe = await asyncio.to_thread(llm.generate_recipe, query)
+        if recipe and not recipe.startswith("⚠"):
+            keyboard = [[InlineKeyboardButton("🔍 Новый поиск", callback_data="back_search")]]
+            await update.message.reply_text(
+                recipe, parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            await update.message.reply_text("Не удалось сгенерировать рецепт. Попробуй другое название.")
         return
 
     meals = meals[:MAX_RESULTS]
@@ -125,6 +138,180 @@ async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Найдено рецептов: {len(meals)}\nВыбери рецепт:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+
+# ───── Коктейли ─────
+
+async def cocktail_menu(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🍸 Выбери действие:", reply_markup=COCKTAIL_KEYBOARD)
+
+
+async def search_cocktails(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = (context.user_data.pop("voice_text", None) or update.message.text).strip().lower()
+    logger.info("Searching cocktails: %s", query)
+    await update.message.reply_chat_action("typing")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{COCKTAILDB_BASE}/search.php", params={"s": query}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.error("Cocktail search failed: %s", e)
+        await update.message.reply_text("Ошибка поиска.")
+        return
+    drinks = data.get("drinks", [])
+    if not drinks:
+        await update.message.reply_text("Ничего не найдено. Попробуй другое название.")
+        return
+    drinks = drinks[:MAX_RESULTS]
+    keyboard = [[InlineKeyboardButton(d["strDrink"], callback_data=f"drink_{d['idDrink']}")] for d in drinks]
+    await update.message.reply_text(
+        f"Найдено коктейлей: {len(drinks)}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def show_cocktail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    drink_id = query.data.replace("drink_", "")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{COCKTAILDB_BASE}/lookup.php", params={"i": drink_id}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.error("Failed to fetch cocktail %s: %s", drink_id, e)
+        await query.edit_message_text("Ошибка.")
+        return
+    drinks = data.get("drinks", [])
+    if not drinks:
+        return
+    d = drinks[0]
+    name = d.get("strDrink") or ""
+    category = d.get("strCategory") or ""
+    alcoholic = d.get("strAlcoholic") or ""
+    glass = d.get("strGlass") or ""
+    instructions = d.get("strInstructions") or ""
+    image = d.get("strDrinkThumb") or ""
+
+    await query.message.delete()
+    if image:
+        await context.bot.send_photo(chat_id=query.message.chat_id, photo=image, caption=f"<b>{escape(name)}</b>", parse_mode="HTML")
+
+    parts = []
+    if category:
+        parts.append(f"🏷 {escape(category)}")
+    if alcoholic:
+        parts.append(f"🍸 {escape(alcoholic)}")
+    if glass:
+        parts.append(f"🥃 Бокал: {escape(glass)}")
+
+    ings = []
+    for i in range(1, 16):
+        ing = d.get(f"strIngredient{i}")
+        meas = d.get(f"strMeasure{i}")
+        if ing and ing.strip():
+            ings.append(f"• {escape(ing.strip())}" + (f" — {escape(meas.strip())}" if meas else ""))
+    if ings:
+        parts.append("<b>Ингредиенты:</b>\n" + "\n".join(ings))
+
+    if instructions:
+        parts.append(f"<b>Приготовление:</b>\n{escape(instructions)}")
+
+    text = "\n\n".join(parts)
+    keyboard = [[InlineKeyboardButton("🎲 Случайный коктейль", callback_data="random_drink"),
+                  InlineKeyboardButton("← К коктейлям", callback_data="back_cocktail")]]
+    for chunk in split_message(text, 4000):
+        await context.bot.send_message(
+            chat_id=query.message.chat_id, text=chunk, parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard) if chunk == text[-min(len(text), 4000):] else None,
+        )
+
+
+async def random_cocktail_handler(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    target = update.callback_query.message if update.callback_query else update.message
+    if update.callback_query:
+        await update.callback_query.answer()
+    await target.reply_chat_action("typing")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{COCKTAILDB_BASE}/random.php", timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.error("Random cocktail failed: %s", e)
+        await target.reply_text("Ошибка.")
+        return
+    drinks = data.get("drinks", [])
+    if not drinks:
+        await target.reply_text("Не удалось.")
+        return
+    drink_id = drinks[0]["idDrink"]
+    keyboard = [[InlineKeyboardButton("🍸 Показать коктейль", callback_data=f"drink_{drink_id}")]]
+    await target.reply_text(f"🍸 <b>{escape(drinks[0]['strDrink'])}</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def filter_cocktails(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    params = {}
+    if data == "cocktail_alcoholic":
+        params = {"a": "Alcoholic"}
+    elif data == "cocktail_non_alcoholic":
+        params = {"a": "Non_Alcoholic"}
+    else:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{COCKTAILDB_BASE}/filter.php", params=params, timeout=15)
+            resp.raise_for_status()
+            data_json = resp.json()
+    except Exception as e:
+        logger.error("Cocktail filter failed: %s", e)
+        await query.message.reply_text("Ошибка.")
+        return
+    drinks = data_json.get("drinks", [])
+    if not drinks:
+        await query.message.reply_text("Ничего не найдено.")
+        return
+    drinks = drinks[:MAX_RESULTS]
+    keyboard = [[InlineKeyboardButton(d["strDrink"], callback_data=f"drink_{d['idDrink']}")] for d in drinks]
+    await query.message.reply_text(
+        f"Найдено коктейлей: {len(drinks)}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def filter_cocktails_by_alcohol(update: Update, context: ContextTypes.DEFAULT_TYPE, alcoholic: str):
+    await update.message.reply_chat_action("typing")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{COCKTAILDB_BASE}/filter.php", params={"a": alcoholic}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.error("Cocktail filter failed: %s", e)
+        await update.message.reply_text("Ошибка.")
+        return
+    drinks = data.get("drinks", [])
+    if not drinks:
+        await update.message.reply_text("Ничего не найдено.")
+        return
+    drinks = drinks[:MAX_RESULTS]
+    keyboard = [[InlineKeyboardButton(d["strDrink"], callback_data=f"drink_{d['idDrink']}")] for d in drinks]
+    await update.message.reply_text(
+        f"Найдено коктейлей: {len(drinks)}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def back_to_cocktail(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+    await query.message.reply_text("🍸 Выбери действие:", reply_markup=COCKTAIL_KEYBOARD)
 
 
 async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -446,10 +633,8 @@ async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cached:
         logger.info("Translation cache hit for recipe %s", recipe_id)
         text = f"<b>🌐 Перевод на русский:</b>\n\n{cached}"
-        if query.message.photo:
-            await query.edit_message_caption(caption=text[:1024], parse_mode="HTML")
-        else:
-            await query.edit_message_text(text[:4000], parse_mode="HTML")
+        for chunk in split_message(text, 4000):
+            await query.message.reply_text(chunk, parse_mode="HTML")
         return
 
     try:
@@ -500,10 +685,8 @@ async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_translation(recipe_id, "ru", reply)
 
     text = f"<b>🌐 Перевод на русский:</b>\n\n{reply}"
-    if query.message.photo:
-        await query.edit_message_caption(caption=text[:1024], parse_mode="HTML")
-    else:
-        await query.edit_message_text(text[:4000], parse_mode="HTML")
+    for chunk in split_message(text, 4000):
+        await query.message.reply_text(chunk, parse_mode="HTML")
 
 
 async def full_recipe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1135,10 +1318,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await back_to_search(update, context)
     elif data == "back_fav":
         await back_to_favorites(update, context)
-    elif data == "generate_ai":
-        await generate_ai_recipe(update, context)
     elif data.startswith("ai_variation_"):
         await ai_variation_recipe(update, context)
+    elif data.startswith("drink_"):
+        await show_cocktail(update, context)
+    elif data == "random_drink":
+        await random_cocktail_handler(update, context)
+    elif data == "back_cocktail":
+        await back_to_cocktail(update, context)
+    elif data == "cocktail_alcoholic" or data == "cocktail_non_alcoholic":
+        await filter_cocktails(update, context)
     else:
         await query.answer()
         await query.edit_message_text(f"Неизвестная команда: {data}. /start")
@@ -1171,12 +1360,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🔍 Фильтры":
         context.user_data.pop("state", None)
         await filter_menu(update, context)
+    elif text == "🍸 Коктейли":
+        context.user_data.pop("state", None)
+        await cocktail_menu(update, context)
+    elif text == "🔍 Поиск коктейлей":
+        context.user_data["state"] = "cocktail_search"
+        await update.message.reply_text("Напиши название коктейля:")
+    elif text == "🎲 Случайный коктейль":
+        context.user_data.pop("state", None)
+        await random_cocktail_handler(update, context)
+    elif text == "🍹 Алкогольные":
+        context.user_data.pop("state", None)
+        await filter_cocktails_by_alcohol(update, context, "Alcoholic")
+    elif text == "🧃 Безалкогольные":
+        context.user_data.pop("state", None)
+        await filter_cocktails_by_alcohol(update, context, "Non_Alcoholic")
+    elif text == "← На главную":
+        context.user_data.pop("state", None)
+        await update.message.reply_text("Главное меню:", reply_markup=MAIN_KEYBOARD)
     elif text == "❓ Помощь":
         context.user_data.pop("state", None)
         await help_command(update, context)
     elif state == "cook":
         context.user_data.pop("state", None)
         await cook_suggest(update, context)
+    elif state == "cocktail_search":
+        context.user_data.pop("state", None)
+        await search_cocktails(update, context)
     else:
         await search_recipes(update, context)
 
