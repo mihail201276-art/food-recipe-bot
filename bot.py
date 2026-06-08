@@ -236,7 +236,7 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not meals:
         return
 
-    ok = add_favorite(user_id, meals[0])
+    ok = await asyncio.to_thread(add_favorite, user_id, meals[0])
     if ok:
         await query.answer("✅ Добавлено в избранное!", show_alert=True)
     else:
@@ -271,7 +271,7 @@ async def remove_favorite_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = query.from_user.id
     logger.info("User %s removing favorite recipe %s", user_id, recipe_id)
 
-    ok = remove_favorite(user_id, recipe_id)
+    ok = await asyncio.to_thread(remove_favorite, user_id, recipe_id)
     if ok:
         await query.answer("✅ Удалено из избранного!", show_alert=True)
     else:

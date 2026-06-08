@@ -81,7 +81,7 @@ def _migrate_db(conn):
 def add_favorite(user_id: int, recipe: dict) -> bool:
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT OR IGNORE INTO favorites
                    (user_id, recipe_id, recipe_name, recipe_image, recipe_area, recipe_category, ingredients, instructions, youtube_url)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -98,7 +98,9 @@ def add_favorite(user_id: int, recipe: dict) -> bool:
                 ),
             )
             conn.commit()
-            return conn.total_changes > 0
+            ok = cur.rowcount > 0
+            logger.info("add_favorite user=%s recipe=%s ok=%s rowcount=%s", user_id, recipe["idMeal"], ok, cur.rowcount)
+            return ok
     except Exception as e:
         logger.error("Error adding favorite: %s", e)
         return False
