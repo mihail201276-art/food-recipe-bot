@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 
 from services.http_client import shared_async_client
 from utils.keyboards import COCKTAIL_KEYBOARD
+from utils.helpers import sanitize_query
 from llm import split_message
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,11 @@ async def cocktail_menu(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_cocktails(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = (context.user_data.pop("voice_text", None) or update.message.text).strip().lower()
+    raw = sanitize_query(context.user_data.pop("voice_text", None) or update.message.text)
+    query = raw.lower() if raw else ""
+    if not query:
+        await update.message.reply_text("Пожалуйста, введи название коктейля (от 2 символов).")
+        return
     logger.info("Searching cocktails: %s", query)
     await update.message.reply_chat_action("typing")
     try:

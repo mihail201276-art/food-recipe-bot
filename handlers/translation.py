@@ -6,9 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from services.http_client import shared_async_client
-from database import get_profile, check_translation_limit, increment_translation_usage, get_translation, save_translation
+from database import get_profile, check_and_increment_translation, get_translation, save_translation
 from llm import get_llm_response, split_message
-import llm as llm_module
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     profile = get_profile(user_id)
     limit = PREMIUM_DAILY_LIMIT if profile.get("premium") else TRANSLATE_DAILY_LIMIT
-    if not check_translation_limit(user_id, limit):
+    if not check_and_increment_translation(user_id, limit):
         await query.message.reply_text(f"⚠️ Лимит переводов на сегодня ({limit} шт.) исчерпан. Попробуй завтра.")
         return
 
@@ -89,7 +88,6 @@ async def translate_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     reply = await asyncio.to_thread(get_llm_response, recipe_text, system_prompt)
-    increment_translation_usage(user_id)
     save_translation(recipe_id, "ru", reply)
 
     text = f"<b>🌐 Перевод на русский:</b>\n\n{reply}"
@@ -105,7 +103,7 @@ async def translate_cocktail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     profile = get_profile(user_id)
     limit = PREMIUM_DAILY_LIMIT if profile.get("premium") else TRANSLATE_DAILY_LIMIT
-    if not check_translation_limit(user_id, limit):
+    if not check_and_increment_translation(user_id, limit):
         await query.message.reply_text(f"⚠️ Лимит переводов на сегодня ({limit} шт.) исчерпан.")
         return
 
@@ -159,7 +157,6 @@ async def translate_cocktail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     reply = await asyncio.to_thread(get_llm_response, drink_text, system)
-    increment_translation_usage(user_id)
 
     text = f"<b>🌐 Перевод на русский:</b>\n\n{reply}"
     for chunk in split_message(text, 4000):

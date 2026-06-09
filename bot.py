@@ -15,7 +15,7 @@ import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, LabeledPrice
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 
-from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_translation_limit, increment_translation_usage, log_meal, get_daily_nutrition, get_recent_meals
+from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_and_increment_translation, log_meal, get_daily_nutrition, get_recent_meals
 from assistant_bot import run_assistant_bot
 import llm
 from llm import split_message, transcribe_audio, _call_proxyapi_vision

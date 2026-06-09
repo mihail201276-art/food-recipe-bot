@@ -7,6 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from services.http_client import shared_async_client
+from utils.helpers import sanitize_query
 import llm
 
 logger = logging.getLogger(__name__)
@@ -21,13 +22,12 @@ async def search_prompt(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = (context.user_data.pop("voice_text", None) or update.message.text).strip()
+    query = sanitize_query(context.user_data.pop("voice_text", None) or update.message.text)
+    if not query:
+        await update.message.reply_text("Пожалуйста, введи корректное название блюда (от 2 символов).")
+        return
     user_id = update.effective_user.id
     logger.info("User %s searching for: %s", user_id, query)
-
-    if not query:
-        await update.message.reply_text("Пожалуйста, введи название блюда.")
-        return
 
     await update.message.reply_chat_action("typing")
 

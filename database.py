@@ -261,7 +261,7 @@ def get_profile(user_id: int) -> dict:
             return dict(row) if row else {"allergies": "", "diet": "", "gluten_free": 0, "premium": 0}
     except Exception as e:
         logger.error("Error getting profile: %s", e)
-        return {"allergies": "", "diet": "", "gluten_free": 0}
+        return {"allergies": "", "diet": "", "gluten_free": 0, "premium": 0}
 
 
 _PROFILE_SQL = {
@@ -284,38 +284,30 @@ def save_profile(user_id: int, field: str, value: str | int):
         logger.error("Error saving profile: %s", e)
 
 
-def check_translation_limit(user_id: int, limit: int = 20) -> bool:
+def check_and_increment_translation(user_id: int, limit: int = 20) -> bool:
     try:
         today = __import__("datetime").date.today().isoformat()
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             row = conn.execute(
                 "SELECT count FROM translation_usage WHERE user_id = ? AND date = ?",
                 (user_id, today),
             ).fetchone()
             count = row[0] if row else 0
-            return count < limit
-    except Exception as e:
-        logger.error("Error checking translation limit: %s", e)
-        return True
-
-
-def increment_translation_usage(user_id: int):
-    try:
-        today = __import__("datetime").date.today().isoformat()
-        with sqlite3.connect(DB_PATH) as conn:
+            if count >= limit:
+                return False
             conn.execute(
                 "INSERT OR REPLACE INTO translation_usage (user_id, date, count) "
                 "VALUES (?, ?, COALESCE((SELECT count FROM translation_usage WHERE user_id=? AND date=?), 0) + 1)",
                 (user_id, today, user_id, today),
             )
             conn.commit()
+            return True
     except Exception as e:
-        logger.error("Error incrementing translation usage: %s", e)
+        logger.error("Error checking/incrementing translation: %s", e)
+        return False
 
 
 def set_premium(user_id: int, value: int = 1):
-    if "premium" not in ALLOWED_PROFILE_FIELDS:
-        return
     try:
         with _db_lock, sqlite3.connect(DB_PATH) as conn:
             conn.execute(
