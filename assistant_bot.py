@@ -11,7 +11,10 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_http = httpx.Client(timeout=30)
+_http = httpx.Client(
+    timeout=httpx.Timeout(30.0, connect=10.0, read=25.0),
+    limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+)
 
 SYSTEM_PROMPT = (
     "Ты кулинарный помощник: рецепты, замены ингредиентов, диеты, "
@@ -19,12 +22,20 @@ SYSTEM_PROMPT = (
 )
 
 
-def _api_call(token: str, method: str, json_data: dict):
-    r = _http.post(
-        f"https://api.telegram.org/bot{token}/{method}",
-        json=json_data,
-    )
-    return r.json()
+def _api_call(token: str, method: str, json_data: dict) -> dict | None:
+    try:
+        r = _http.post(
+            f"https://api.telegram.org/bot{token}/{method}",
+            json=json_data,
+        )
+        return r.json()
+    except httpx.TimeoutException:
+        logger.warning("Telegram API timeout: %s", method)
+    except httpx.HTTPStatusError as e:
+        logger.warning("Telegram API error %s: %s", method, e.response.status_code)
+    except Exception:
+        logger.exception("Telegram API call failed: %s", method)
+    return None
 
 
 def handle_update(update: dict, token: str):
@@ -46,16 +57,16 @@ def handle_update(update: dict, token: str):
         return
 
     if text == "/clear":
-        add_history(user_id, "system", "")  # dummy call to trigger cleanup later
+        add_history(user_id, "system", "")
         import sqlite3
         from pathlib import Path
-        db_path = Path(__file__).parent / "favorites.db"
         try:
+            db_path = Path(__file__).parent / "favorites.db"
             with sqlite3.connect(db_path) as conn:
                 conn.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to clear history for user %s: %s", user_id, e)
         _api_call(token, "sendMessage", {
             "chat_id": chat_id,
             "text": "История диалога очищена.",
@@ -73,7 +84,6 @@ def handle_update(update: dict, token: str):
     for h in history:
         messages.append({"role": h["role"], "content": h["content"]})
 
-    # build single prompt with history
     prompt_parts = []
     for m in messages:
         if m["role"] == "system":
@@ -82,6 +92,13 @@ def handle_update(update: dict, token: str):
     full_prompt = "\n".join(prompt_parts)
 
     reply = get_llm_response(full_prompt, SYSTEM_PROMPT)
+    if not reply:
+        _api_call(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": "⚠️ Не удалось получить ответ от ИИ. Попробуй позже.",
+        })
+        return
+
     add_history(user_id, "assistant", reply)
 
     for part in split_message(reply):
@@ -115,8 +132,13 @@ def run_assistant_bot():
                 handle_update(update, token)
                 offset = update["update_id"] + 1
 
+        except httpx.TimeoutException:
+            logger.warning("Polling timeout, retrying...")
+        except httpx.HTTPStatusError as e:
+            logger.error("Polling HTTP error: %s", e.response.status_code)
+            time.sleep(10)
         except Exception as e:
-            logger.error("Polling error: %s", e)
+            logger.exception("Polling error")
             time.sleep(5)
 
 
