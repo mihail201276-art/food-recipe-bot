@@ -77,6 +77,10 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_nutrition_user_date ON nutrition_log(user_id, date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_history(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trans_usage ON translation_usage(user_id, date)")
         conn.commit()
         _migrate_db(conn)
     logger.info("Database initialized")
@@ -260,19 +264,21 @@ def get_profile(user_id: int) -> dict:
         return {"allergies": "", "diet": "", "gluten_free": 0}
 
 
-ALLOWED_PROFILE_FIELDS = {"allergies", "diet", "gluten_free", "premium"}
+_PROFILE_SQL = {
+    "allergies": "INSERT INTO user_profiles (user_id, allergies) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET allergies = excluded.allergies",
+    "diet": "INSERT INTO user_profiles (user_id, diet) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET diet = excluded.diet",
+    "gluten_free": "INSERT INTO user_profiles (user_id, gluten_free) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET gluten_free = excluded.gluten_free",
+    "premium": "INSERT INTO user_profiles (user_id, premium) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET premium = excluded.premium",
+}
 
 def save_profile(user_id: int, field: str, value: str | int):
-    if field not in ALLOWED_PROFILE_FIELDS:
+    sql = _PROFILE_SQL.get(field)
+    if not sql:
         logger.error("Attempt to set invalid profile field: %s", field)
         return
     try:
         with _db_lock, sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                f"INSERT INTO user_profiles (user_id, {field}) VALUES (?, ?) "
-                f"ON CONFLICT(user_id) DO UPDATE SET {field} = excluded.{field}",
-                (user_id, value),
-            )
+            conn.execute(sql, (user_id, value))
             conn.commit()
     except Exception as e:
         logger.error("Error saving profile: %s", e)
