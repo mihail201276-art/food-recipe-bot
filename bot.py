@@ -37,6 +37,7 @@ PREMIUM_DAILY_LIMIT = int(os.getenv("PREMIUM_DAILY_LIMIT", "100"))
 
 from utils.keyboards import MAIN_KEYBOARD, NUTRITION_KEYBOARD, COCKTAIL_KEYBOARD
 from services.http_client import shared_async_client
+from services.rate_limiter import rate_limiter
 
 from handlers.common import start, help_command, donate_cmd, back_to_main, back_to_search, back_to_favorites
 from handlers.search import search_prompt, search_recipes
@@ -55,6 +56,12 @@ from handlers.shopping import cook_prompt, cook_suggest, shopping_list, meal_pla
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
+
+    if not rate_limiter.is_allowed(user_id):
+        await query.answer("🚀 Слишком много запросов. Подожди немного.", show_alert=True)
+        return
+
     data = query.data
     logger.info("Callback: %s", data)
 
@@ -120,8 +127,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
     user_id = update.effective_user.id
+
+    if not rate_limiter.is_allowed(user_id):
+        await update.message.reply_text("🚀 Слишком много запросов. Подожди немного.")
+        return
+
+    text = update.message.text.strip()
 
     state = context.user_data.get("state")
     prof_field = context.user_data.get("prof_field")

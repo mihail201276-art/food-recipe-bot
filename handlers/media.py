@@ -7,12 +7,18 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from llm import transcribe_audio, _call_proxyapi_vision, split_message
+from services.rate_limiter import rate_limiter
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
+    if not rate_limiter.is_allowed(user_id):
+        await update.message.reply_text("🚀 Слишком много запросов. Подожди немного.")
+        return
+
     logger.info("User %s sent voice message", user_id)
 
     file = await update.message.voice.get_file()
@@ -34,6 +40,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
+    if not rate_limiter.is_allowed(user_id):
+        await update.message.reply_text("🚀 Слишком много запросов. Подожди немного.")
+        return
+
     logger.info("User %s sent photo", user_id)
 
     await update.message.reply_chat_action("typing")

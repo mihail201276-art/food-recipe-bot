@@ -144,7 +144,7 @@ def remove_favorite(user_id: int, recipe_id: str) -> bool:
 
 def update_rating(user_id: int, recipe_id: str, rating: int) -> bool:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             cursor = conn.execute(
                 "UPDATE favorites SET rating = ? WHERE user_id = ? AND recipe_id = ?",
                 (rating, user_id, recipe_id),
@@ -211,7 +211,7 @@ def get_translation(recipe_id: str, lang: str = "ru") -> str | None:
 
 def save_translation(recipe_id: str, lang: str, text: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO translations (recipe_id, lang, translated_text) VALUES (?, ?, ?)",
                 (recipe_id, lang, text),
@@ -223,7 +223,7 @@ def save_translation(recipe_id: str, lang: str, text: str):
 
 def add_history(user_id: int, role: str, content: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
                 (user_id, role, content),
