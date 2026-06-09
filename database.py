@@ -62,6 +62,21 @@ def init_db():
                 PRIMARY KEY (user_id, date)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS nutrition_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                meal_type TEXT DEFAULT '',  -- завтрак/обед/ужин/перекус
+                food_name TEXT NOT NULL,
+                calories REAL DEFAULT 0,
+                protein REAL DEFAULT 0,
+                fat REAL DEFAULT 0,
+                carbs REAL DEFAULT 0,
+                water_ml REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
         _migrate_db(conn)
     logger.info("Database initialized")
@@ -315,3 +330,49 @@ def _serialize_ingredients(recipe: dict) -> str:
         if name and name.strip():
             ingredients.append(f"{name.strip()} – {measure.strip()}" if measure else name.strip())
     return "\n".join(ingredients)
+
+
+def log_meal(user_id: int, date: str, meal_type: str, food_name: str, calories: float = 0, protein: float = 0, fat: float = 0, carbs: float = 0, water_ml: float = 0):
+    try:
+        with _db_lock, sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO nutrition_log (user_id, date, meal_type, food_name, calories, protein, fat, carbs, water_ml) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, date, meal_type, food_name, calories, protein, fat, carbs, water_ml),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("Error logging meal: %s", e)
+
+
+def get_daily_nutrition(user_id: int, date: str) -> dict:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(calories),0), COALESCE(SUM(protein),0), "
+                "COALESCE(SUM(fat),0), COALESCE(SUM(carbs),0), COALESCE(SUM(water_ml),0) "
+                "FROM nutrition_log WHERE user_id=? AND date=?",
+                (user_id, date),
+            ).fetchone()
+            return {
+                "calories": round(row[0], 1),
+                "protein": round(row[1], 1),
+                "fat": round(row[2], 1),
+                "carbs": round(row[3], 1),
+                "water_ml": round(row[4], 1),
+            } if row else {"calories": 0, "protein": 0, "fat": 0, "carbs": 0, "water_ml": 0}
+    except Exception:
+        return {"calories": 0, "protein": 0, "fat": 0, "carbs": 0, "water_ml": 0}
+
+
+def get_recent_meals(user_id: int, date: str, limit: int = 10) -> list:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM nutrition_log WHERE user_id=? AND date=? ORDER BY created_at DESC LIMIT ?",
+                (user_id, date, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
+        return []

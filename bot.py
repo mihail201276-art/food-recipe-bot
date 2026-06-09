@@ -15,7 +15,7 @@ import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, LabeledPrice
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 
-from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_translation_limit, increment_translation_usage
+from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_translation_limit, increment_translation_usage, log_meal, get_daily_nutrition, get_recent_meals
 from assistant_bot import run_assistant_bot
 import llm
 from llm import split_message, transcribe_audio, _call_proxyapi_vision
@@ -38,8 +38,16 @@ PREMIUM_DAILY_LIMIT = int(os.getenv("PREMIUM_DAILY_LIMIT", "100"))
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🔍 Поиск рецептов", "📚 Мои рецепты"],
      ["🍳 Что приготовить", "🎲 Удиви меня"],
-     ["🍸 Коктейли", "🔍 Фильтры"],
-     ["❓ Помощь", "🔄 Перезапустить"]],
+     ["🥗 Нутрициолог", "🍸 Коктейли"],
+     ["🔍 Фильтры", "❓ Помощь"],
+     ["🔄 Перезапустить"]],
+    resize_keyboard=True,
+)
+
+NUTRITION_KEYBOARD = ReplyKeyboardMarkup(
+    [["🔬 Анализ рецепта", "📊 Дневной отчёт"],
+     ["💧 Вода +250мл", "➕ Записать приём пищи"],
+     ["← На главную"]],
     resize_keyboard=True,
 )
 
@@ -391,7 +399,8 @@ async def show_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")])
     else:
         keyboard.append([InlineKeyboardButton("❤️ Добавить в избранное", callback_data=f"fav_add_{recipe_id}")])
-    keyboard.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")])
+    keyboard.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}"),
+                      InlineKeyboardButton("🔬 Пищевая ценность", callback_data=f"nutri_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("🥛 Без лактозы", callback_data=f"adapt_lactose_{recipe_id}"),
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     keyboard.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
@@ -447,7 +456,8 @@ async def add_favorite_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     add_btns = [[InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"fav_del_{recipe_id}")]]
     if instr and len(instr) > 500:
         add_btns.append([InlineKeyboardButton("📖 Полный рецепт", callback_data=f"full_recipe_{recipe_id}")])
-    add_btns.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")])
+    add_btns.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}"),
+                      InlineKeyboardButton("🔬 Пищевая ценность", callback_data=f"nutri_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🥛 Без лактозы", callback_data=f"adapt_lactose_{recipe_id}"),
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
@@ -488,7 +498,8 @@ async def remove_favorite_handler(update: Update, context: ContextTypes.DEFAULT_
         pass
     if instr and len(instr) > 500:
         add_btns.append([InlineKeyboardButton("📖 Полный рецепт", callback_data=f"full_recipe_{recipe_id}")])
-    add_btns.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}")])
+    add_btns.append([InlineKeyboardButton("🌐 Перевести на русский", callback_data=f"translate_{recipe_id}"),
+                      InlineKeyboardButton("🔬 Пищевая ценность", callback_data=f"nutri_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("🥛 Без лактозы", callback_data=f"adapt_lactose_{recipe_id}"),
                       InlineKeyboardButton("🔥 Упростить", callback_data=f"adapt_simple_{recipe_id}")])
     add_btns.append([InlineKeyboardButton("👥 На 2 порции", callback_data=f"adapt_portion_{recipe_id}")])
@@ -1359,6 +1370,168 @@ async def ai_variation_recipe(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+# ───── Нутрициолог ─────
+
+async def nutrition_menu(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🥗 <b>Нутрициолог</b>\n\n"
+        "• 🔬 Анализ рецепта — отправь название или ссылку\n"
+        "• 📊 Дневной отчёт — калории, БЖУ, вода\n"
+        "• 💧 Вода +250мл — добавить воды\n"
+        "• ➕ Записать приём пищи — вручную",
+        parse_mode="HTML", reply_markup=NUTRITION_KEYBOARD,
+    )
+
+
+async def nutrition_analyze_prompt(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["state"] = "nutrition_analyze"
+    await update.message.reply_text("Отправь название блюда или описание продуктов:")
+
+
+async def nutrition_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    await update.message.reply_chat_action("typing")
+    result = await asyncio.to_thread(llm.analyze_nutrition, text, "")
+    if not result or "⚠" in result:
+        await update.message.reply_text("Не удалось проанализировать.")
+        return
+    try:
+        import json
+        data = json.loads(result)
+        lines = [
+            f"<b>🔬 Пищевая ценность: {escape(text[:50])}</b>",
+            f"🔥 Калории: <b>{data.get('calories', '?')} ккал</b>",
+            f"🥩 Белки: {data.get('protein', '?')}г",
+            f"🧈 Жиры: {data.get('fat', '?')}г",
+            f"🍚 Углеводы: {data.get('carbs', '?')}г",
+            f"🌾 Клетчатка: {data.get('fiber', '?')}г",
+            f"🍽 Порций: {data.get('servings', 1)}",
+        ]
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        # предложить записать
+        cals = data.get("calories", 0)
+        prot = data.get("protein", 0)
+        fat = data.get("fat", 0)
+        carbs = data.get("carbs", 0)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Записать в дневник",
+                callback_data=f"nutri_log_{text[:30]}|{cals}|{prot}|{fat}|{carbs}"),
+        ]])
+        await update.message.reply_text("Записать в дневник питания?", reply_markup=kb)
+    except Exception:
+        await update.message.reply_text(f"📊 Анализ:\n{result}")
+
+
+async def nutri_log_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.replace("nutri_log_", "").split("|")
+    food_name = parts[0]
+    cals = float(parts[1]) if len(parts) > 1 else 0
+    prot = float(parts[2]) if len(parts) > 2 else 0
+    fat = float(parts[3]) if len(parts) > 3 else 0
+    carbs = float(parts[4]) if len(parts) > 4 else 0
+    user_id = query.from_user.id
+    today = __import__("datetime").date.today().isoformat()
+    log_meal(user_id, today, "анализ", food_name, cals, prot, fat, carbs)
+    await query.message.reply_text("✅ Записано в дневник!")
+
+
+async def nutrition_daily_report(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    today = __import__("datetime").date.today().isoformat()
+    day = get_daily_nutrition(user_id, today)
+    meals = get_recent_meals(user_id, today)
+    lines = [f"<b>📊 Дневной отчёт за {today}</b>",
+             f"🔥 Калории: <b>{day['calories']} ккал</b>",
+             f"🥩 Белки: {day['protein']}г  🧈 Жиры: {day['fat']}г  🍚 Углеводы: {day['carbs']}г",
+             f"💧 Вода: {day['water_ml']}мл",
+             ""]
+    if meals:
+        lines.append("🍽 Приёмы пищи:")
+        for m in meals[:5]:
+            lines.append(f"• {m['food_name'][:40]} — {m['calories']}ккал")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def nutrition_add_water(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    today = __import__("datetime").date.today().isoformat()
+    log_meal(user_id, today, "вода", "Вода", water_ml=250)
+    total = get_daily_nutrition(user_id, today)["water_ml"]
+    await update.message.reply_text(f"💧 +250мл воды! Всего сегодня: {total}мл")
+
+
+async def nutrition_log_meal_prompt(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["state"] = "nutrition_manual"
+    await update.message.reply_text(
+        "Напиши в формате:\n"
+        "<i>Название блюда, калории, белки, жиры, углеводы</i>\n\n"
+        "Например: <i>Овсянка, 300, 10, 5, 50</i>",
+        parse_mode="HTML",
+    )
+
+
+async def nutrition_log_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    parts = update.message.text.split(",")
+    if len(parts) < 2:
+        await update.message.reply_text("Неверный формат. Используй: Название, калории, белки, жиры, углеводы")
+        return
+    food = parts[0].strip()
+    cals = float(parts[1].strip()) if len(parts) > 1 else 0
+    prot = float(parts[2].strip()) if len(parts) > 2 else 0
+    fat = float(parts[3].strip()) if len(parts) > 3 else 0
+    carbs = float(parts[4].strip()) if len(parts) > 4 else 0
+    user_id = update.effective_user.id
+    today = __import__("datetime").date.today().isoformat()
+    log_meal(user_id, today, "ручной", food, cals, prot, fat, carbs)
+    await update.message.reply_text(f"✅ {food} — {cals}ккал записано!")
+
+
+async def recipe_nutrition(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    recipe_id = query.data.replace("nutri_", "")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{MEALDB_BASE}/lookup.php", params={"i": recipe_id}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        await query.message.reply_text("Ошибка.")
+        return
+    meals = data.get("meals", [])
+    if not meals:
+        return
+    meal = meals[0]
+    name = meal.get("strMeal", "")
+    ings = []
+    for i in range(1, 21):
+        ing = meal.get(f"strIngredient{i}")
+        meas = meal.get(f"strMeasure{i}")
+        if ing and ing.strip():
+            ings.append(f"{ing} — {meas if meas else ''}")
+    ingredients_text = "\n".join(ings)
+    instructions = meal.get("strInstructions", "")
+    await query.message.reply_text(f"🔬 Анализирую «{name}»...")
+    result = await asyncio.to_thread(llm.analyze_nutrition, name, ingredients_text, instructions)
+    try:
+        import json
+        data = json.loads(result)
+        lines = [
+            f"<b>🔬 {escape(name)}</b>",
+            f"🔥 Калории: <b>{data.get('calories', '?')} ккал</b>",
+            f"🥩 Белки: {data.get('protein', '?')}г",
+            f"🧈 Жиры: {data.get('fat', '?')}г",
+            f"🍚 Углеводы: {data.get('carbs', '?')}г",
+            f"🌾 Клетчатка: {data.get('fiber', '?')}г",
+            f"🍽 Порций: {data.get('servings', 1)}",
+        ]
+        await query.message.reply_text("\n".join(lines), parse_mode="HTML")
+    except Exception:
+        await query.message.reply_text(f"📊 {result}")
+
+
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -1416,6 +1589,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await back_to_cocktail(update, context)
     elif data == "cocktail_alcoholic" or data == "cocktail_non_alcoholic":
         await filter_cocktails(update, context)
+    elif data.startswith("nutri_log_"):
+        await nutri_log_handler(update, context)
+    elif data.startswith("nutri_"):
+        await recipe_nutrition(update, context)
     else:
         await query.answer()
         await query.edit_message_text(f"Неизвестная команда: {data}. /start")
@@ -1463,6 +1640,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🧃 Безалкогольные":
         context.user_data.pop("state", None)
         await filter_cocktails_by_alcohol(update, context, "Non_Alcoholic")
+    elif text == "🥗 Нутрициолог":
+        context.user_data.pop("state", None)
+        await nutrition_menu(update, context)
+    elif text == "🔬 Анализ рецепта":
+        context.user_data["state"] = "nutrition_analyze"
+        await update.message.reply_text("Отправь название блюда или описание продуктов:")
+    elif text == "📊 Дневной отчёт":
+        context.user_data.pop("state", None)
+        await nutrition_daily_report(update, context)
+    elif text == "💧 Вода +250мл":
+        context.user_data.pop("state", None)
+        await nutrition_add_water(update, context)
+    elif text == "➕ Записать приём пищи":
+        context.user_data["state"] = "nutrition_manual"
+        await update.message.reply_text(
+            "Напиши в формате:\n"
+            "<i>Название, калории, белки, жиры, углеводы</i>\n\n"
+            "Пример: <i>Овсянка, 300, 10, 5, 50</i>",
+            parse_mode="HTML",
+        )
     elif text == "← На главную":
         context.user_data.pop("state", None)
         await update.message.reply_text("Главное меню:", reply_markup=MAIN_KEYBOARD)
@@ -1478,6 +1675,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state == "cocktail_search":
         context.user_data.pop("state", None)
         await search_cocktails(update, context)
+    elif state == "nutrition_analyze":
+        context.user_data.pop("state", None)
+        await nutrition_analyze(update, context)
+    elif state == "nutrition_manual":
+        context.user_data.pop("state", None)
+        await nutrition_log_manual(update, context)
     else:
         await search_recipes(update, context)
 

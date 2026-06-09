@@ -158,6 +158,18 @@ def generate_recipe(query: str) -> str | None:
     return get_llm_response(query, system)
 
 
+def analyze_nutrition(recipe_name: str, ingredients: str, instructions: str = "") -> str:
+    system = (
+        "Ты диетолог-нутрициолог. Проанализируй блюдо и выдай ТОЛЬКО JSON без пояснений:\n"
+        '{"calories": число, "protein": граммы, "fat": граммы, "carbs": граммы, '
+        '"fiber": граммы, "servings": число}\n'
+        "Оценивай на 1 порцию. Если данных мало — приблизительно, но реалистично."
+    )
+    prompt = f"Блюдо: {recipe_name}\nИнгредиенты:\n{ingredients}\n\nИнструкция:\n{instructions[:200]}"
+    reply = get_llm_response(prompt, system)
+    return reply
+
+
 def get_llm_response(message: str, system_prompt: str = "") -> str:
     reply = _call_proxyapi(message, system_prompt, "gpt-4o-mini")
     if reply:
