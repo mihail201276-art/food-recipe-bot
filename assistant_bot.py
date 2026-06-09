@@ -3,6 +3,7 @@ import time
 import logging
 
 from dotenv import load_dotenv
+import httpx
 from llm import get_llm_response, split_message
 from database import add_history, get_history
 
