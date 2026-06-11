@@ -11,16 +11,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+
+if dsn := os.getenv("SENTRY_DSN"):
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[LoggingIntegration()],
+        traces_sample_rate=1.0,
+    )
+
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, LabeledPrice
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 
 from database import init_db, add_favorite, remove_favorite, get_favorites, is_favorite, update_rating, get_rating, get_translation, save_translation, get_profile, save_profile, set_premium, check_and_increment_translation, log_meal, get_daily_nutrition, get_recent_meals
-from assistant_bot import run_assistant_bot
+from assistant_bot import run_assistant_bot, shutdown_event
 import llm
 from llm import split_message, transcribe_audio, _call_proxyapi_vision
 
-import logging
+from services.http_client import shared_async_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -244,17 +254,37 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(callback_router))
 
+    async def shutdown(_app: Application):
+        logger.info("Shutting down...")
+        shutdown_event.set()
+        if t.is_alive():
+            t.join(timeout=5)
+        await shared_async_client.aclose()
+
+    app.post_shutdown(shutdown)
+
     port = int(os.getenv("PORT", "10000"))
     render_url = os.getenv("RENDER_EXTERNAL_URL", "https://food-recipe-bot.onrender.com")
     webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
     webhook_url = f"{render_url}{webhook_path}"
     logger.info("Starting webhook on port %d at %s", port, webhook_url)
+
+    import tornado.web
+
+    class HealthHandler(tornado.web.RequestHandler):
+        def get(self):
+            self.write({"status": "ok"})
+            self.finish()
+
     kwargs = dict(
         listen="0.0.0.0",
         port=port,
         url_path=webhook_path,
         webhook_url=webhook_url,
         allowed_updates=Update.ALL_TYPES,
+        custom_webhook_app=tornado.web.Application([
+            (r"/health", HealthHandler),
+        ]),
     )
     if secret := os.getenv("WEBHOOK_SECRET"):
         kwargs["secret_token"] = secret

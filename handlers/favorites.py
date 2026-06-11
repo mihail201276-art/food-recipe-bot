@@ -115,6 +115,10 @@ async def remove_favorite_handler(update: Update, context: ContextTypes.DEFAULT_
 async def rate_recipe(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     parts = query.data.split("_")
+    if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        logger.warning("Invalid rate callback: %s", query.data)
+        await query.answer("Некорректные данные", show_alert=True)
+        return
     recipe_id = parts[1]
     rating = int(parts[2])
     user_id = query.from_user.id

@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import logging
 
 from dotenv import load_dotenv
@@ -11,7 +12,9 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_http = httpx.Client(
+shutdown_event = threading.Event()
+
+_http_pool = httpx.Client(
     timeout=httpx.Timeout(30.0, connect=10.0, read=25.0),
     limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
 )
@@ -22,20 +25,22 @@ SYSTEM_PROMPT = (
 )
 
 
-def _api_call(token: str, method: str, json_data: dict) -> dict | None:
+def _api_call(token: str, method: str, json_data: dict) -> dict:
     try:
-        r = _http.post(
+        r = _http_pool.post(
             f"https://api.telegram.org/bot{token}/{method}",
             json=json_data,
         )
         return r.json()
     except httpx.TimeoutException:
-        logger.warning("Telegram API timeout: %s", method)
+        logger.error("API timeout: %s", method)
+        return {"ok": False, "error": "timeout"}
     except httpx.HTTPStatusError as e:
-        logger.warning("Telegram API error %s: %s", method, e.response.status_code)
-    except Exception:
-        logger.exception("Telegram API call failed: %s", method)
-    return None
+        logger.error("API HTTP %s: %s", e.response.status_code, method)
+        return {"ok": False, "error": f"http_{e.response.status_code}"}
+    except Exception as e:
+        logger.exception("API error: %s", method)
+        return {"ok": False, "error": str(e)}
 
 
 def handle_update(update: dict, token: str):
@@ -117,14 +122,14 @@ def run_assistant_bot():
     logger.info("Assistant бот запущен (polling)...")
     offset = 0
 
-    while True:
+    while not shutdown_event.is_set():
         try:
             data = _api_call(token, "getUpdates", {
                 "offset": offset,
                 "timeout": 30,
             })
             if not data.get("ok"):
-                logger.warning("getUpdates not ok: %s", data)
+                logger.warning("getUpdates failed: %s", data.get("error", "unknown"))
                 time.sleep(5)
                 continue
 
@@ -132,14 +137,12 @@ def run_assistant_bot():
                 handle_update(update, token)
                 offset = update["update_id"] + 1
 
-        except httpx.TimeoutException:
-            logger.warning("Polling timeout, retrying...")
-        except httpx.HTTPStatusError as e:
-            logger.error("Polling HTTP error: %s", e.response.status_code)
-            time.sleep(10)
-        except Exception as e:
+        except Exception:
             logger.exception("Polling error")
             time.sleep(5)
+
+    _http_pool.close()
+    logger.info("Assistant bot stopped")
 
 
 if __name__ == "__main__":

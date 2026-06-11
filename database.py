@@ -163,7 +163,7 @@ def get_rating(user_id: int, recipe_id: str) -> int:
                 "SELECT rating FROM favorites WHERE user_id = ? AND recipe_id = ?",
                 (user_id, recipe_id),
             ).fetchone()
-            return int(row[0]) if row else 0
+            return int(row[0]) if row and row[0] not in (None, "") else 0
     except Exception as e:
         logger.error("Error getting rating: %s", e)
         return 0

@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 
 import httpx
@@ -8,6 +9,19 @@ logger = logging.getLogger(__name__)
 
 
 PROXYAPI_BASE = "https://api.proxyapi.ru/openai/v1"
+
+
+def _retry(fn, max_attempts=3, delay=1):
+    for attempt in range(max_attempts):
+        try:
+            result = fn()
+            if result is not None:
+                return result
+        except Exception as e:
+            logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
+        if attempt < max_attempts - 1:
+            time.sleep(delay * (2 ** attempt))
+    return None
 
 def _log_usage(model: str, usage):
     if usage:
@@ -19,7 +33,8 @@ def _call_proxyapi(message: str, system_prompt: str, model: str = "gpt-4o-mini")
     key = os.getenv("PROXYAPI_KEY")
     if not key:
         return None
-    try:
+
+    def _do_call():
         client = OpenAI(api_key=key, base_url=PROXYAPI_BASE, timeout=30)
         messages = []
         if system_prompt:
@@ -28,9 +43,8 @@ def _call_proxyapi(message: str, system_prompt: str, model: str = "gpt-4o-mini")
         resp = client.chat.completions.create(model=model, messages=messages)
         _log_usage(model, resp.usage)
         return resp.choices[0].message.content
-    except Exception as e:
-        logger.warning("ProxyAPI %s failed: %s", model, e)
-        return None
+
+    return _retry(_do_call, max_attempts=3, delay=1)
 
 
 def _call_proxyapi_vision(image_url: str, prompt: str = "Что это за продукты? Что можно приготовить?") -> str | None:
