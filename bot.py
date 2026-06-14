@@ -262,7 +262,7 @@ def main():
             t.join(timeout=5)
         await shared_async_client.aclose()
 
-    app.post_shutdown(shutdown)
+    app.post_shutdown.add(shutdown)
 
     port = int(os.getenv("PORT", "10000"))
     render_url = os.getenv("RENDER_EXTERNAL_URL", "https://food-recipe-bot.onrender.com")
