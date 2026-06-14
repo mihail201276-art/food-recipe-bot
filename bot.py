@@ -270,32 +270,14 @@ def main():
     webhook_url = f"{render_url}{webhook_path}"
     logger.info("Starting webhook on port %d at %s", port, webhook_url)
 
-    from telegram.ext._updater import WebhookAppClass
-    import tornado.web
-
-    class HealthHandler(tornado.web.RequestHandler):
-        def get(self):
-            self.write({"status": "ok"})
-            self.finish()
-
-    _orig_webhook_init = WebhookAppClass.__init__
-
-    def _patched_webhook_init(self, webhook_path, bot, update_queue, secret_token=None):
-        _orig_webhook_init(self, webhook_path, bot, update_queue, secret_token)
-        self.add_handlers([(r"/health", HealthHandler)])
-
-    WebhookAppClass.__init__ = _patched_webhook_init
-
-    kwargs = dict(
+    app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=webhook_path,
         webhook_url=webhook_url,
         allowed_updates=Update.ALL_TYPES,
+        secret_token=os.getenv("WEBHOOK_SECRET"),
     )
-    if secret := os.getenv("WEBHOOK_SECRET"):
-        kwargs["secret_token"] = secret
-    app.run_webhook(**kwargs)
 
 
 if __name__ == "__main__":
