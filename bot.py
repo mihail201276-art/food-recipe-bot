@@ -6,6 +6,7 @@ import base64
 import io
 import threading
 from html import escape
+import logging
 
 from dotenv import load_dotenv
 
